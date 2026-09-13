@@ -11,13 +11,7 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 - Detects the running game automatically
 - Remembers your settings per game
 - Updates itself, including new games and fixes
-
-## Supported games
-
-| Game | Options |
-| --- | --- |
-| The Blood of Dawnwalker | Infinite Human Health, Infinite Vampiric Blood, Infinite Stamina, Speed (2x/4x/8x), Denarius (1k/10k/100k) |
-| Dragon Age: The Veilguard | Infinite Health, Unlimited Mana, No Cooldowns, Unlimited Potions, Ability Points Never Decrease, Bonus XP (+5000), Gold 99,999 |
+- Shows which script is loaded: its update date, checksum and a link to its source
 
 Single-player only. Do not use with online or competitive games.
 
@@ -29,19 +23,6 @@ Single-player only. Do not use with online or competitive games.
 4. Close the trainer with **X** when done.
 
 If it says "cannot open process", run it as Administrator.
-
-## Compared with Cheat Engine tables
-
-| | Cheat Engine table (`.CT`) | AZ Trainer |
-| --- | --- | --- |
-| **Needs** | Cheat Engine installed | Nothing else |
-| **Interface** | Generic address list | Toggles and levels for each game |
-| **Attaching** | Pick the process by hand | Automatic |
-| **Settings** | Forgotten between sessions | Remembered per game |
-| **Updates** | Download a newer table | Automatic |
-| **Finding new cheats** | Built-in scanner and debugger | Not included |
-
-Cheat Engine is the tool for researching a game; AZ Trainer is for playing with the result.
 
 ## Adding games
 

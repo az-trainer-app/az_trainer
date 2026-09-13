@@ -1,16 +1,14 @@
-# The app: build and tests. Runs only when the app, or the configs it loads, change.
+# The app: build and tests. Runs only when Rust code changes - scripts and
+# docs are covered by the scripts workflow.
 name: app
 
 on:
   pull_request:
     paths: &paths
       - 'src/**'
+      - 'build.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - 'build.rs'
-      - 'az_trainer.ico'
-      - 'configs/**'
-      - '.github/workflows/app.yml'
   push:
     branches: [main]
     paths: *paths

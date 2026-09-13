@@ -106,7 +106,8 @@ cargo test --release
 ```
 
 Golden hook bytes, library tests, and app tests (including loading every config in QuickJS).
-All run on every pull request. Game scripts themselves are tested in-game.
+CI runs the script checks when scripts or tests change, and the app tests only when Rust code
+changes - run `cargo test` yourself after editing a config. Game scripts themselves are tested in-game.
 
 ## Updates
 
