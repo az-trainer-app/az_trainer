@@ -107,7 +107,7 @@ cargo test --release
 ```
 
 Golden hook bytes, library tests, and app tests (including loading every config in QuickJS).
-All run on every pull request.
+All run on every pull request. Game scripts themselves are tested in-game.
 
 ## Updates
 
