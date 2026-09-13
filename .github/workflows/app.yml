@@ -1,0 +1,37 @@
+# The app: build and tests. Runs only when the app, or the configs it loads, change.
+name: app
+
+on:
+  pull_request:
+    paths: &paths
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'az_trainer.ico'
+      - 'configs/**'
+      - '.github/workflows/app.yml'
+  push:
+    branches: [main]
+    paths: *paths
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Tests need neither optimisation nor debug info; both slow the build and
+  # the link. Release builds are unaffected.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld
+
+jobs:
+  app:
+    name: Build and test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test

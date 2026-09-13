@@ -27,9 +27,6 @@ jobs:
             throw "tag ${{ github.ref_name }} does not match Cargo.toml version $v"
           }
 
-      - name: Test
-        run: cargo test --release --bin az_trainer
-
       - name: Build
         run: cargo build --release --bin az_trainer
 
