@@ -40,7 +40,7 @@ const XP_BONUS = 5000;
 // mov [rdx+4], r15d / cmp r15d, r12d - the gold store. Setting r15d first
 // makes every write land on the value we choose.
 const GOLD_SIG = '44 89 7A 04 45 3B FC';
-const GOLD_AMOUNT = 99999;
+const GOLD_AMOUNTS = [1000, 10000, 99999];
 
 /** jmp +6 over an 8-byte instruction: skips it entirely. */
 const SKIP_8 = HOOK.jmpShort(6);
@@ -62,19 +62,13 @@ export const options = [
     {
         name: 'Infinite Health',
         tick({ on }) {
-            OPT.whileOn('health', on, () => {
-                const at = SCAN.once(ALIVE_SIG);
-                return at
-                    ? HOOK.holdFieldAtSibling(
-                          at,
-                          ALIVE_STEAL,
-                          FLAG_PTR_OFF,
-                          FLAG_OFF,
-                          HEALTH_OFF,
-                          MAX_HEALTH_OFF,
-                      )
-                    : null;
-            });
+            OPT.whileFound(
+                'health',
+                on,
+                () => SCAN.once(ALIVE_SIG),
+                (at) =>
+                    HOOK.holdFieldAtSibling(at, ALIVE_STEAL, FLAG_PTR_OFF, FLAG_OFF, HEALTH_OFF, MAX_HEALTH_OFF),
+            );
         },
     },
     {
@@ -87,20 +81,13 @@ export const options = [
     {
         name: 'No Cooldowns',
         tick({ on }) {
-            // two sites: skip the compare, then zero the clamp
-            OPT.patchWhileOn(
-                'cd1',
-                on,
-                () => {
-                    const at = SCAN.once(CD1_SIG);
-                    return at && at + 5; // the patch lands 5 bytes in
-                },
-                HOOK.xorps('xmm1', 'xmm1'),
-            );
-            OPT.patchWhileOn('cd2', on, () => SCAN.once(CD2_SIG), [
-                ...HOOK.xorps('xmm6', 'xmm6'),
-                ...HOOK.nops(1),
-            ]);
+            // two sites: skip the compare (5 bytes in), then zero the clamp
+            const cd1 = () => {
+                const at = SCAN.once(CD1_SIG);
+                return at && at + 5;
+            };
+            OPT.patchWhileOn('cd1', on, cd1, HOOK.xorps('xmm1', 'xmm1'));
+            OPT.patchWhileOn('cd2', on, () => SCAN.once(CD2_SIG), [...HOOK.xorps('xmm6', 'xmm6'), ...HOOK.nops(1)]);
         },
     },
     {
@@ -120,21 +107,27 @@ export const options = [
         // Also feeds vendor strength, which scales with your level.
         name: 'Bonus XP (+5000)',
         tick({ on }) {
-            OPT.whileOn('xp', on, () => {
-                const at = SCAN.once(XP_SIG);
-                return at ? HOOK.detour(at, 7, HOOK.addR32Imm('r14d', XP_BONUS)) : null;
-            });
+            OPT.whileFound('xp', on, () => SCAN.once(XP_SIG), (at) =>
+                HOOK.detour(at, 7, HOOK.addR32Imm('r14d', XP_BONUS)),
+            );
         },
     },
     {
         // Forces the stored amount rather than topping up once, so spending
         // does not reduce it. Takes effect on the next gold write.
-        name: 'Gold 99,999',
-        tick({ on }) {
-            OPT.whileOn('gold', on, () => {
-                const at = SCAN.once(GOLD_SIG);
-                return at ? HOOK.detour(at, 7, HOOK.movR32Imm('r15d', GOLD_AMOUNT)) : null;
-            });
+        name: 'Gold',
+        levels: GOLD_AMOUNTS,
+        labels: ['1k', '10k', '99k'],
+        tick({ on, mult }) {
+            // One detour per amount. The others come out first, so a new one
+            // never steals another's jump as its "original" bytes.
+            for (const amount of GOLD_AMOUNTS) {
+                if (!on || amount !== mult) OPT.whileOn(`gold ${amount}`, false, () => null);
+            }
+            if (!on) return;
+            OPT.whileFound(`gold ${mult}`, true, () => SCAN.once(GOLD_SIG), (at) =>
+                HOOK.detour(at, 7, HOOK.movR32Imm('r15d', mult)),
+            );
         },
     },
 ];

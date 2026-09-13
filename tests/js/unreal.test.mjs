@@ -5,7 +5,7 @@ import { BASE, createMem, install } from './fake-mem.mjs';
 
 const UNREAL = new URL('../../configs/lib/unreal.js', import.meta.url).href;
 let fresh = 0;
-/** A new copy of unreal.js: it caches GWorld, which must not leak between tests. */
+/** A new copy of unreal.js, so module state (settled objects) does not leak between tests. */
 const load = () => import(`${UNREAL}?copy=${fresh++}`);
 
 const le64 = (v) => {
@@ -31,8 +31,6 @@ const LOCAL_PLAYERS = HEAP + 0x300000;
 const LOCAL_PLAYER = HEAP + 0x400000;
 const CONTROLLER = HEAP + 0x500000;
 const PAWN = HEAP + 0x600000;
-const LEVEL = HEAP + 0xd00000;
-const WORLD_SETTINGS = HEAP + 0xe00000;
 
 /** A fake UE5 process with the whole walk from GWorld to the pawn in place. */
 function ue5World({ inMenu = false } = {}) {
@@ -44,8 +42,6 @@ function ue5World({ inMenu = false } = {}) {
     fake.poke(LOCAL_PLAYERS, le64(LOCAL_PLAYER));
     fake.poke(LOCAL_PLAYER + 0x30, le64(inMenu ? 0 : CONTROLLER));
     fake.poke(CONTROLLER + 0x2f8, le64(PAWN));
-    fake.poke(WORLD + 0x30, le64(LEVEL));
-    fake.poke(LEVEL + 0x2b0, le64(WORLD_SETTINGS));
     install(fake);
     return fake;
 }
@@ -56,12 +52,6 @@ test('walks GWorld to the player controller and pawn', async () => {
     assert.equal(UE.gworld(), GWORLD);
     assert.equal(UE.playerController(), CONTROLLER);
     assert.equal(UE.pawn(), PAWN);
-});
-
-test('finds WorldSettings through the persistent level', async () => {
-    ue5World();
-    const UE = await load();
-    assert.equal(UE.worldSettings(), WORLD_SETTINGS);
 });
 
 test('reports no pawn while in a menu', async () => {
@@ -104,6 +94,16 @@ test('hold sets both halves of an attribute to its maximum', async () => {
     assert.equal(UE.fmt('Health', UE.hold(set, 0x40, 0x50, false)), 'Health  1746 / 1746');
 });
 
+test('hold falls back to the maximum\'s BaseValue', async () => {
+    const fake = ue5World();
+    const UE = await load();
+    const set = HEAP + 0x980000;
+    fake.poke(set + 0x50 + 0x8, f32(900)); // MaxHealth.Base
+    fake.poke(set + 0x50 + 0xc, f32(0)); // MaxHealth.Current not there yet
+    fake.poke(set + 0x40 + 0xc, f32(100));
+    assert.deepEqual(UE.hold(set, 0x40, 0x50, false), { cur: 100, max: 900 });
+});
+
 test('holdProduct uses segments x per-segment as the maximum', async () => {
     const fake = ue5World();
     const UE = await load();
@@ -122,18 +122,6 @@ test('no reading when the maximum is not there yet', async () => {
     fake.poke(set + 0x50 + 0xc, f32(0));
     assert.equal(UE.hold(set, 0x40, 0x50, true), null);
     assert.equal(UE.fmt('Health', null), undefined);
-});
-
-test('poke restores the original value when switched off', async () => {
-    const fake = ue5World();
-    const UE = await load();
-    const addr = HEAP + 0xc00000;
-    fake.poke(addr, f32(600));
-    UE.poke(addr, 2400, true);
-    UE.poke(addr, 2400, true); // repeated ticks must not overwrite the saved original
-    assert.equal(fake.mem.f32(addr), 2400);
-    UE.poke(addr, 2400, false);
-    assert.equal(fake.mem.f32(addr), 600);
 });
 
 test('settled: trusts an object only after it has stayed the same', async () => {

@@ -27,6 +27,8 @@ const TIME_DILATION = 0x68;
 /** The multiplier Speed is applying, so other options can see past it. */
 let speedMult = 1;
 
+// --- No Slow-Motion Finishers ------------------------------------------------
+
 // AWorldSettings::GetEffectiveTimeDilation, as this build has it. UWorld::Tick
 // multiplies every frame's delta by the result.
 //   movss xmm0, [rcx+4F0]    the game's own factor - finishers lower it
@@ -53,7 +55,8 @@ function withoutGameSlowmo(site) {
     ];
 }
 
-// No Hit Reaction. Two edits, both needed:
+// --- No Hit Reaction -----------------------------------------------------------
+// Two edits, both needed:
 //
 // 1. A `test rax,rax / je rel32` on the hit path becomes `nop / jmp rel32`.
 const HIT_BRANCH_SIG =
@@ -69,6 +72,7 @@ const HIT_ACTOR_SIG =
     '48 8B 4B 10 48 8B D0 E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? 00 00 ?? 8D ?? ?? ?? ?? 8B ?? E8 ?? ?? ?? ?? ?? 8B ?? E8';
 const HIT_ACTOR_STEAL = 7;
 const HIT_ACTOR_SKIP = 12;
+const HIT_SLOT_PAWN = 0x40;
 
 /**
  * Detour the actor check so it is skipped only when rbx is the pawn in the
@@ -76,44 +80,33 @@ const HIT_ACTOR_SKIP = 12;
  * @param {number} target
  */
 function noHitActorHook(target) {
-    const original = mem.readBytes(target, HIT_ACTOR_STEAL);
-    if (!original || original.length !== HIT_ACTOR_STEAL) return null;
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-    const slotPawn = cave + 0x40;
-
-    const code = [
-        0x48, 0x3b, 0x1d, ...HOOK.i32(slotPawn - (cave + 7)), // cmp rbx,[slotPawn]
-        0x75, 0x10,                                          // jne normal
-        0x31, 0xc0,                                          // xor eax,eax
-        ...HOOK.jmpAbs(target + HIT_ACTOR_SKIP),             // past the call
-        ...original,                                         // normal:
-        ...HOOK.jmpAbs(target + HIT_ACTOR_STEAL),
-    ];
-    mem.writeBytes(slotPawn, HOOK.u64(0));
-    mem.writeBytes(cave, code);
-    if (!mem.writeBytes(target, [0xe9, ...HOOK.i32(rel), ...HOOK.nops(HIT_ACTOR_STEAL - 5)])) {
-        mem.free(cave);
-        return null;
-    }
-    return {
-        setGuard(/** @type {number} */ addr) {
-            mem.writeBytes(slotPawn, HOOK.u64(addr || 0));
-        },
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
+    const h = HOOK.cave(
+        target,
+        HIT_ACTOR_STEAL,
+        (cave, original) =>
+            mem.writeBytes(cave + HIT_SLOT_PAWN, HOOK.u64(0)) &&
+            mem.writeBytes(cave, [
+                0x48, 0x3b, 0x1d, ...HOOK.i32(HIT_SLOT_PAWN - 7), // cmp rbx,[pawn slot]
+                0x75, 0x10,                                      // jne normal
+                0x31, 0xc0,                                      // xor eax,eax
+                ...HOOK.jmpAbs(target + HIT_ACTOR_SKIP),         // past the call
+                ...original,                                     // normal:
+                ...HOOK.jmpAbs(target + HIT_ACTOR_STEAL),
+            ]),
+    );
+    return (
+        h && {
+            ...h,
+            /** @param {number} addr */
+            setGuard: (addr) => mem.writeBytes(h.cave + HIT_SLOT_PAWN, HOOK.u64(addr || 0)),
+        }
+    );
 }
 
 /** @type {ReturnType<typeof noHitActorHook>} */
 let noHitActor = null;
+
+// --- Denarius --------------------------------------------------------------------
 
 // Denarius goes through the game's own currency functions, so whatever the
 // game does on a balance change still happens. Both take the inventory
@@ -173,70 +166,52 @@ const DENARIUS_TIMEOUT_MS = 10000;
 
 /**
  * Hook the inventory function with the currency cave.
- * @returns {(import('../lib/hook.js').Restorable & {
- *   arm(player: number, amount: number): boolean,
- *   disarm(): void,
- *   pending(): boolean,
- * }) | null}
+ *
+ * The cave is never freed: the game thread may be inside it (in AddCurrency)
+ * when the hook comes out, and returning into a freed page would crash. One
+ * page per use is a fair price.
  */
 function currencyHook() {
     const hit = SCAN.once(INVENTORY_SIG);
     const get = SCAN.once(GET_CURRENCY_SIG);
     const add = SCAN.once(ADD_CURRENCY_SIG);
-    if (!hit || !get || !add) return null;
+    const thread = mem.mainThreadId();
+    if (!hit || !get || !add || !thread) return null;
     const target = hit - INVENTORY_BACK;
 
-    const original = mem.readBytes(target, INVENTORY_BACK);
-    if (!original || original.length !== INVENTORY_BACK) return null;
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
+    const h = HOOK.cave(
+        target,
+        INVENTORY_BACK,
+        (cave) =>
+            mem.writeBytes(cave, INVENTORY_CAVE) &&
+            mem.writeBytes(cave + SLOT_THREAD, HOOK.i32(thread)) &&
+            mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(0)) && // disarmed
+            mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(0)) &&
+            mem.writeBytes(cave + SLOT_GET, HOOK.u64(get)) &&
+            mem.writeBytes(cave + SLOT_ADD, HOOK.u64(add)) &&
+            mem.writeBytes(cave + SLOT_RETURN, HOOK.u64(target + INVENTORY_BACK)),
+        { free: false },
+    );
+    if (!h) return null;
 
-    const thread = mem.mainThreadId();
-    if (!thread) {
-        mem.free(cave);
-        return null;
-    }
-
-    mem.writeBytes(cave, INVENTORY_CAVE);
-    mem.writeBytes(cave + SLOT_THREAD, HOOK.i32(thread));
-    mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(0)); // disarmed
-    mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(0));
-    mem.writeBytes(cave + SLOT_GET, HOOK.u64(get));
-    mem.writeBytes(cave + SLOT_ADD, HOOK.u64(add));
-    mem.writeBytes(cave + SLOT_RETURN, HOOK.u64(target + INVENTORY_BACK));
-    if (!mem.writeBytes(target, [0xe9, ...HOOK.i32(rel)])) {
-        mem.free(cave);
-        return null;
-    }
-
+    /** @type {(off: number, bytes: number[]) => boolean} */
+    const write = (off, bytes) => mem.writeBytes(h.cave + off, bytes);
     const disarm = () => {
-        mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(0));
-        mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(0));
+        write(SLOT_MONEY, HOOK.i32(0));
+        write(SLOT_PLAYER, HOOK.u64(0));
     };
     return {
-        arm(player, amount) {
-            // amount first would let a stale player slot fire it; player first
-            // with money still 0 fires nothing
-            return (
-                mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(player)) &&
-                mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(amount))
-            );
-        },
+        /**
+         * Player first: with the amount still 0, a stale player fires nothing.
+         * @param {number} player
+         * @param {number} amount
+         */
+        arm: (player, amount) => write(SLOT_PLAYER, HOOK.u64(player)) && write(SLOT_MONEY, HOOK.i32(amount)),
         disarm,
-        pending() {
-            return mem.i32(cave + SLOT_MONEY) !== 0;
-        },
+        pending: () => mem.i32(h.cave + SLOT_MONEY) !== 0,
         restore() {
             disarm();
-            mem.writeBytes(target, original);
-            // Deliberately not freed: the game thread may be inside the cave
-            // (in AddCurrency) at this moment, and returning into a freed page
-            // would crash. One page per use is a fair price.
+            h.restore();
         },
     };
 }
@@ -246,14 +221,21 @@ let currency = null;
 let currencyArmed = false;
 let currencyDeadline = 0;
 
+// --- helpers ---------------------------------------------------------------------
+
 /** The player's pawn, once it is safe to write to. */
 function pawn() {
     return UE.settled('pawn', UE.pawn());
 }
 
-function humanSet() {
+/**
+ * A sub-object of the pawn, once it is safe to write to.
+ * @param {string} key
+ * @param {number} off
+ */
+function pawnPart(key, off) {
     const p = pawn();
-    return p ? UE.settled('human', UE.comp(p, HUMAN_SET)) : 0;
+    return p ? UE.settled(key, UE.comp(p, off)) : 0;
 }
 
 /** In-world once the pawn resolves. */
@@ -267,27 +249,23 @@ export const options = [
     {
         name: 'Infinite Human Health',
         tick({ on }) {
-            const s = humanSet();
-            if (!s) return;
-            return UE.fmt('Health', UE.hold(s, HEALTH, MAX_HEALTH, on));
+            const s = pawnPart('human', HUMAN_SET);
+            return s ? UE.fmt('Health', UE.hold(s, HEALTH, MAX_HEALTH, on)) : undefined;
         },
     },
     {
         name: 'Infinite Vampiric Blood',
         tick({ on }) {
-            const p = pawn();
-            const s = p ? UE.settled('vampire', UE.comp(p, VAMP_SET)) : 0;
-            if (!s) return;
             // max is segments x per-segment, so it tracks upgrades automatically
-            return UE.fmt('Blood', UE.holdProduct(s, BLOOD, BLOOD_SEGMENTS, BLOOD_PER_SEGMENT, on));
+            const s = pawnPart('vampire', VAMP_SET);
+            return s ? UE.fmt('Blood', UE.holdProduct(s, BLOOD, BLOOD_SEGMENTS, BLOOD_PER_SEGMENT, on)) : undefined;
         },
     },
     {
         name: 'Infinite Stamina',
         tick({ on }) {
-            const s = humanSet();
-            if (!s) return;
-            return UE.fmt('Stamina', UE.hold(s, STAMINA, MAX_STAMINA, on));
+            const s = pawnPart('human', HUMAN_SET);
+            return s ? UE.fmt('Stamina', UE.hold(s, STAMINA, MAX_STAMINA, on)) : undefined;
         },
     },
     {
@@ -296,19 +274,18 @@ export const options = [
             const applied = OPT.whileOn('nohit', on, () => {
                 const branch = SCAN.once(HIT_BRANCH_SIG);
                 const actor = SCAN.once(HIT_ACTOR_SIG);
-                if (!branch || !actor) return null;
-                const jmp = HOOK.patch(branch + HIT_BRANCH_OFF, [0x90, 0xe9]);
-                if (!jmp) return null;
-                noHitActor = noHitActorHook(actor);
-                if (!noHitActor) {
-                    jmp.restore();
+                const jmp = branch && actor ? HOOK.patch(branch + HIT_BRANCH_OFF, [0x90, 0xe9]) : null;
+                const hook = jmp && noHitActorHook(actor);
+                if (!jmp || !hook) {
+                    jmp?.restore();
                     return null;
                 }
+                noHitActor = hook;
                 return {
                     restore() {
-                        noHitActor?.restore();
-                        noHitActor = null;
+                        hook.restore();
                         jmp.restore();
+                        noHitActor = null;
                     },
                 };
             });
@@ -326,10 +303,12 @@ export const options = [
             // never touch the pawn's dilation.
             const p = UE.pawn();
             const hasted = p ? mem.f32(p + TIME_DILATION) / speedMult > 1.05 : false;
-            OPT.whileOn('slowmo', on && !hasted, () => {
-                const at = SCAN.once(EFFECTIVE_DILATION_SIG);
-                return at ? HOOK.patch(at, withoutGameSlowmo(at)) : null;
-            });
+            OPT.whileFound(
+                'slowmo',
+                on && !hasted,
+                () => SCAN.once(EFFECTIVE_DILATION_SIG),
+                (at) => HOOK.patch(at, withoutGameSlowmo(at)),
+            );
         },
     },
     {
@@ -378,27 +357,23 @@ export const options = [
             const p = pawn(); // 0 while loading, or until the pawn has settled
 
             if (!currencyArmed) {
-                if (p) currencyArmed = currency.arm(p, mult);
-                if (!currencyArmed && now > currencyDeadline) {
-                    log('Denarius: not in the world - nothing changed');
-                    return true;
-                }
-                return false;
-            }
-            if (!currency.pending()) {
-                currency.disarm();
-                return true; // applied
-            }
-            if (!p) {
-                currency.disarm(); // a load began: never fire into the next world
-                log('Denarius: cancelled by a load');
+                currencyArmed = !!p && currency.arm(p, mult);
+                if (currencyArmed || now <= currencyDeadline) return false;
+                log('Denarius: not in the world - nothing changed');
                 return true;
             }
-            if (now > currencyDeadline) {
-                currency.disarm();
-                log('Denarius: timed out - open the inventory right after clicking');
+
+            // Every way out disarms, so nothing stays armed into a load.
+            const hook = currency;
+            /** @param {string} [why] */
+            const done = (why) => {
+                hook.disarm();
+                if (why) log(`Denarius: ${why}`);
                 return true;
-            }
+            };
+            if (!hook.pending()) return done(); // applied
+            if (!p) return done('cancelled by a load'); // never fire into the next world
+            if (now > currencyDeadline) return done('timed out - open the inventory right after clicking');
             return false;
         },
     },

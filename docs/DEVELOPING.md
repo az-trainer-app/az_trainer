@@ -61,9 +61,9 @@ Put it in `configs/games/` with `somegame.jpg` beside it for artwork.
 
 | Library | Contents |
 | --- | --- |
-| `lib/hook.js` | Patches, detours, replacements, flag-guarded writes, instruction encoders |
+| `lib/hook.js` | Patches, code caves, detours, flag-guarded writes, instruction encoders |
 | `lib/scan.js` | Cached signature scans: `once`, `onceWhere`, `ripF32` |
-| `lib/option.js` | `whileOn`, `patchWhileOn`, `writeOnce` |
+| `lib/option.js` | `whileOn`, `whileFound`, `patchWhileOn` |
 | `lib/unreal.js` | UE5 pawn walks, pointer chains, attribute holds |
 
 ### Porting a Cheat Engine table

@@ -45,14 +45,8 @@ export function u64(v) {
     const out = [];
     let hi = Math.floor(v / 0x100000000);
     let lo = v >>> 0;
-    for (let i = 0; i < 4; i++) {
-        out.push(lo & 0xff);
-        lo >>>= 8;
-    }
-    for (let i = 0; i < 4; i++) {
-        out.push(hi & 0xff);
-        hi >>>= 8;
-    }
+    for (let i = 0; i < 4; i++, lo >>>= 8) out.push(lo & 0xff);
+    for (let i = 0; i < 4; i++, hi >>>= 8) out.push(hi & 0xff);
     return out;
 }
 
@@ -66,15 +60,65 @@ export function jmpAbs(target) {
 }
 
 /**
- * Overwrite `len` bytes with NOP.
+ * Plain byte patch with restore -- no cave, no jump.
+ *
+ * Most published cheat-table edits are this simple: overwrite an instruction
+ * with a branch or a zeroing one of the same length.
+ *
  * @param {number} addr
- * @param {number} len
- * @returns {number[]} the original bytes
+ * @param {number[]} bytes
+ * @returns {Patch | null}
  */
-export function nopOut(addr, len) {
-    const original = mem.readBytes(addr, len);
-    mem.writeBytes(addr, new Array(len).fill(0x90));
-    return original;
+export function patch(addr, bytes) {
+    if (!addr || !bytes.length) return null;
+    const original = mem.readBytes(addr, bytes.length);
+    if (!original || original.length !== bytes.length) return null;
+    if (!mem.writeBytes(addr, bytes)) return null;
+    return {
+        addr,
+        original,
+        restore() {
+            mem.writeBytes(addr, original);
+        },
+    };
+}
+
+/**
+ * Point the first `stealLen` bytes of `target` at a fresh code cave.
+ *
+ * `fill(cave, original)` writes the cave - code and any data slots - and
+ * returns false if it could not. Only then does the jump go in, so the game
+ * never runs a half-written cave.
+ *
+ * @param {number} target
+ * @param {number} stealLen bytes to overwrite; >= 5, ending on an instruction boundary
+ * @param {(cave: number, original: number[]) => boolean} fill
+ * @param {{ free?: boolean }} [opts] `free: false` keeps the cave allocated
+ *   after restore(), for caves the game may still be executing
+ * @returns {Detour | null} null if it could not be installed
+ */
+export function cave(target, stealLen, fill, { free = true } = {}) {
+    if (!target || stealLen < 5) return null;
+    const original = mem.readBytes(target, stealLen);
+    if (!original || original.length !== stealLen) return null;
+    const at = mem.alloc(0x1000, target);
+    if (!at) return null;
+
+    const rel = at - (target + 5); // E9 rel32 must reach the cave
+    const inRange = rel <= 0x7ffffff0 && rel >= -0x7ffffff0;
+    if (!inRange || !fill(at, original) || !mem.writeBytes(target, [0xe9, ...i32(rel), ...nops(stealLen - 5)])) {
+        mem.free(at);
+        return null;
+    }
+    return {
+        target,
+        cave: at,
+        original,
+        restore() {
+            mem.writeBytes(target, original);
+            if (free) mem.free(at);
+        },
+    };
 }
 
 /**
@@ -87,249 +131,64 @@ export function nopOut(addr, len) {
  * @returns {Detour | null} null if it could not be installed
  */
 export function detour(target, stealLen, code) {
-    if (!target || stealLen < 5) return null;
-
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-
-    // cave: [code][stolen][jmp back to after the patch]
-    const body = [...code, ...original, ...jmpAbs(target + stealLen)];
-    if (!mem.writeBytes(cave, body)) {
-        mem.free(cave);
-        return null;
-    }
-
-    // target: E9 rel32 -> cave, NOP padding
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave); // allocation landed out of jump range
-        return null;
-    }
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        original,
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
+    return cave(target, stealLen, (at, original) =>
+        mem.writeBytes(at, [...code, ...original, ...jmpAbs(target + stealLen)]),
+    );
 }
 
 /**
- * Keep a detour in step with an on/off switch, installing and removing it as
- * needed.
+ * Hold a field at a sibling field's value, for the entity a flag identifies.
  *
- * @param {{ handle: Detour | null }} state holds the installed detour between calls
- * @param {boolean} on
- * @param {number} target
+ * Games routinely funnel every entity through one routine, so the useful
+ * question is never "which address is the player" but "how does the game
+ * itself tell". Where a flag exists, reading it beats any statistical guess.
+ *
+ * Copying `maxOff` rather than writing a constant keeps the HUD honest: a
+ * flat huge value makes current/max meaningless and the bar renders empty,
+ * and it also survives levelling, since max moves on its own.
+ *
+ *   push  rcx
+ *   mov   rcx, [rcx+flagPtrOff]
+ *   cmp   dword [rcx+flagOff], 0
+ *   pop   rcx
+ *   je    skip
+ *   push  rax
+ *   mov   eax, [rcx+maxOff]
+ *   mov   [rcx+curOff], eax
+ *   pop   rax
+ *   skip: <stolen bytes>
+ *   jmp   back
+ *
+ * The copy is `mov`, which leaves flags alone, and the stolen compare runs
+ * afterwards either way.
+ *
+ * @param {number} target a routine entered with the entity in rcx
  * @param {number} stealLen
- * @param {() => number[]} build returns the code bytes; called at install time
- * @returns {boolean} whether the detour is installed
- */
-export function toggle(state, on, target, stealLen, build) {
-    if (on && !state.handle) {
-        state.handle = detour(target, stealLen, build());
-        return !!state.handle;
-    }
-    if (!on && state.handle) {
-        state.handle.restore();
-        state.handle = null;
-    }
-    return !!state.handle;
-}
-
-/**
- * Guarded scale hook -- generic, reusable across games.
- *
- * Many engines funnel float writes through a shared setter of the shape:
- *
- *     movss [rcx+A], xmm1     <- 5-byte entry, the hook site
- *     ...
- *     mov  rax, [rcx+G]       <- G = guardOffset, holds the destination
- *     movss [rax], xmm1
- *     ret
- *
- * Scaling xmm1 blindly would corrupt every value the setter handles, so the
- * cave compares [rcx+guardOffset] against an address you supply and only
- * scales on a match. Both the guarded address and the multiplier live in data
- * slots you can rewrite at any time without reinstalling the hook -- which
- * matters because the object usually moves when the game reloads.
- *
- * @param {number} target the setter's 5-byte entry
- * @param {number} stealLen
- * @param {number} guardOffset offset of the destination pointer from rcx
- * @returns {(Detour & {
- *   setGuard(addr: number): void,
- *   setMult(multiplier: number): void,
- *   counts(): [calls: number, matches: number],
- * }) | null}
- */
-export function guardedScale(target, stealLen, guardOffset) {
-    if (!target || stealLen < 5) return null;
-
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-
-    const slotAddr = cave + 0x40;
-    const slotMult = cave + 0x48;
-    const slotCalls = cave + 0x50; // times the setter ran at all
-    const slotHits = cave + 0x58; // times the guard matched (we scaled)
-
-    // Layout (offsets within the cave):
-    //   0x00 mov   r10,[rcx+G]
-    //   0x04 inc   qword [calls]        <- every call through the setter
-    //   0x0B cmp   r10,[slotAddr]
-    //   0x12 jne   skip -> 0x23
-    //   0x14 inc   qword [hits]         <- calls where the guard matched
-    //   0x1B mulss xmm1,[slotMult]
-    //   0x23 <stolen>                   (skip lands here)
-    //   ...  jmp   back
-    const code = [
-        0x4c, 0x8b, 0x51, guardOffset & 0xff,                     // mov r10,[rcx+G]
-        0x48, 0xff, 0x05, ...i32(slotCalls - (cave + 0x0b)),      // inc qword [calls]
-        0x4c, 0x3b, 0x15, ...i32(slotAddr - (cave + 0x12)),       // cmp r10,[slotAddr]
-        0x75, 0x0f,                                               // jne skip
-        0x48, 0xff, 0x05, ...i32(slotHits - (cave + 0x1b)),       // inc qword [hits]
-        0xf3, 0x0f, 0x59, 0x0d, ...i32(slotMult - (cave + 0x23)), // mulss xmm1,[slotMult]
-        ...original,
-        ...jmpAbs(target + stealLen),
-    ];
-    if (code.length > 0x40) {
-        mem.free(cave);
-        return null;
-    }
-
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-
-    mem.writeBytes(cave, code);
-    mem.writeBytes(slotAddr, u64(0)); // no guard yet: scales nothing
-    mem.writeF32(slotMult, 1.0);
-    mem.writeBytes(slotCalls, u64(0));
-    mem.writeBytes(slotHits, u64(0));
-
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        original,
-        setGuard(addr) {
-            mem.writeBytes(slotAddr, u64(addr || 0));
-        },
-        /** Calls through the setter, and how many the guard matched - proves the cave runs. */
-        counts() {
-            const rd8 = (a) => {
-                const b = mem.readBytes(a, 8);
-                if (!b || b.length < 8) return -1;
-                let v = 0;
-                for (let i = 7; i >= 0; i--) v = v * 256 + b[i];
-                return v;
-            };
-            return [rd8(slotCalls), rd8(slotHits)];
-        },
-        setMult(m) {
-            mem.writeF32(slotMult, m);
-        },
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
-}
-
-/**
- * Compare bytes at `addr` against an expected pattern.
- * @param {number} addr
- * @param {(number | null)[]} expected null entries match any byte
- * @returns {boolean}
- */
-export function bytesMatch(addr, expected) {
-    const got = mem.readBytes(addr, expected.length);
-    if (!got || got.length !== expected.length) return false;
-    return expected.every((b, i) => b === null || b === got[i]);
-}
-
-/**
- * Replace an instruction instead of prepending to it.
- *
- * detour() runs your code and THEN the original instruction. Sometimes the
- * original must be gone -- turning `mov [rbx+1C8], eax` into a constant store,
- * for instance, where re-running the original would immediately overwrite you.
- *
- * @param {number} target
- * @param {number} stealLen bytes `code` substitutes for; >= 5, ending on an instruction boundary
- * @param {number[]} code
+ * @param {number} flagPtrOff offset from rcx of the object holding the flag
+ * @param {number} flagOff offset of the dword flag in that object; nonzero = act
+ * @param {number} curOff field to overwrite
+ * @param {number} maxOff field to copy from
  * @returns {Detour | null}
  */
-export function replace(target, stealLen, code) {
-    if (!target || stealLen < 5) return null;
-
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-
-    // cave: [your code][jmp back past the replaced instruction]
-    if (!mem.writeBytes(cave, [...code, ...jmpAbs(target + stealLen)])) {
-        mem.free(cave);
-        return null;
-    }
-
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        original,
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
-}
-
-/**
- * `mov dword ptr [rbx+disp32], imm32` -- the C7 83 form.
- * @param {number} disp32
- * @param {number} imm32
- * @returns {number[]}
- */
-export function movRbxImm(disp32, imm32) {
-    return [0xc7, 0x83, ...i32(disp32), ...i32(imm32)];
+export function holdFieldAtSibling(target, stealLen, flagPtrOff, flagOff, curOff, maxOff) {
+    const copy = [
+        0x50,                          // push rax
+        0x8b, 0x41, maxOff & 0xff,     // mov eax, [rcx+maxOff]
+        0x89, 0x41, curOff & 0xff,     // mov [rcx+curOff], eax
+        0x58,                          // pop rax
+    ];
+    return cave(target, stealLen, (at, original) =>
+        mem.writeBytes(at, [
+            0x51,                                  // push rcx
+            0x48, 0x8b, 0x49, flagPtrOff & 0xff,   // mov rcx, [rcx+flagPtrOff]
+            0x83, 0xb9, ...i32(flagOff), 0x00,     // cmp dword [rcx+flagOff], 0
+            0x59,                                  // pop rcx
+            0x74, copy.length,                     // je skip
+            ...copy,
+            ...original,
+            ...jmpAbs(target + stealLen),
+        ]),
+    );
 }
 
 // --- instruction encoders ---------------------------------------------------
@@ -412,292 +271,4 @@ export function jmpShort(n) {
  */
 export function nops(n) {
     return new Array(n).fill(0x90);
-}
-
-/**
- * Plain byte patch with restore -- no cave, no jump.
- *
- * Most published cheat-table edits are this simple: overwrite an instruction
- * with a branch or a zeroing one of the same length. Use `replace()` only when
- * the substitute does not fit in the original's bytes.
- *
- * @param {number} addr
- * @param {number[]} bytes
- * @returns {Patch | null}
- */
-export function patch(addr, bytes) {
-    if (!addr || !bytes.length) return null;
-    const original = mem.readBytes(addr, bytes.length);
-    if (!original || original.length !== bytes.length) return null;
-    if (!mem.writeBytes(addr, bytes)) return null;
-    return {
-        addr,
-        original,
-        restore() {
-            mem.writeBytes(addr, original);
-        },
-    };
-}
-
-/**
- * Guarded "load max before the store".
- *
- * For shared float stores of the form `movss [reg+curOff], xmm0`, where the
- * same instruction serves every entity in the game. The cave compares the
- * destination address against a guarded one and only substitutes the max
- * value for that entity -- leaving everyone else untouched.
- *
- *   lea   r10, [rdi+curOff]
- *   cmp   r10, [slotAddr]
- *   jne   skip
- *   movss xmm0, [rdi+maxOff]
- *   skip: <stolen store>
- *   jmp   back
- *
- * Assumes RDI as the base register.
- *
- * @param {number} target
- * @param {number} stealLen
- * @param {number} curOff
- * @param {number} maxOff
- * @returns {(Detour & { setGuard(addr: number): void }) | null}
- */
-export function guardedLoadMax(target, stealLen, curOff, maxOff) {
-    if (!target || stealLen < 5) return null;
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-    const slotAddr = cave + 0x40;
-
-    const code = [
-        0x4c, 0x8d, 0x57, curOff & 0xff,                   // lea r10, [rdi+curOff]
-        0x4c, 0x3b, 0x15, ...i32(slotAddr - (cave + 11)),  // cmp r10, [slotAddr]
-        0x75, 0x05,                                        // jne skip
-        0xf3, 0x0f, 0x10, 0x47, maxOff & 0xff,             // movss xmm0, [rdi+maxOff]
-        ...original,
-        ...jmpAbs(target + stealLen),
-    ];
-    if (code.length > 0x40) {
-        mem.free(cave);
-        return null;
-    }
-
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-
-    mem.writeBytes(cave, code);
-    mem.writeBytes(slotAddr, u64(0)); // guards nothing until set
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        original,
-        setGuard(addr) {
-            mem.writeBytes(slotAddr, u64(addr || 0));
-        },
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
-}
-
-/**
- * Hold a field at a sibling field's value, for the entity a flag identifies.
- *
- * Games routinely funnel every entity through one routine, so the useful
- * question is never "which address is the player" but "how does the game
- * itself tell". Where a flag exists, reading it beats any statistical guess.
- *
- * Copying `maxOff` rather than writing a constant keeps the HUD honest: a
- * flat huge value makes current/max meaningless and the bar renders empty,
- * and it also survives levelling, since max moves on its own.
- *
- *   push  rcx
- *   mov   rcx, [rcx+flagPtrOff]
- *   cmp   dword [rcx+flagOff], 0
- *   pop   rcx
- *   je    skip
- *   push  rax
- *   mov   eax, [rcx+maxOff]
- *   mov   [rcx+curOff], eax
- *   pop   rax
- *   skip: <stolen bytes>
- *   jmp   back
- *
- * The copy is `mov`, which leaves flags alone, and the stolen compare runs
- * afterwards either way.
- *
- * @param {number} target a routine entered with the entity in rcx
- * @param {number} stealLen
- * @param {number} flagPtrOff offset from rcx of the object holding the flag
- * @param {number} flagOff offset of the dword flag in that object; nonzero = act
- * @param {number} curOff field to overwrite
- * @param {number} maxOff field to copy from
- * @returns {Detour | null}
- */
-export function holdFieldAtSibling(target, stealLen, flagPtrOff, flagOff, curOff, maxOff) {
-    if (!target || stealLen < 5) return null;
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-
-    const copy = [
-        0x50,                          // push rax
-        0x8b, 0x41, maxOff & 0xff,     // mov eax, [rcx+maxOff]
-        0x89, 0x41, curOff & 0xff,     // mov [rcx+curOff], eax
-        0x58,                          // pop rax
-    ];
-    const code = [
-        0x51,                                  // push rcx
-        0x48, 0x8b, 0x49, flagPtrOff & 0xff,   // mov rcx, [rcx+flagPtrOff]
-        0x83, 0xb9, ...i32(flagOff), 0x00,     // cmp dword [rcx+flagOff], 0
-        0x59,                                  // pop rcx
-        0x74, copy.length,                     // je skip
-        ...copy,
-        ...original,
-        ...jmpAbs(target + stealLen),
-    ];
-    if (code.length > 0xe00) {
-        mem.free(cave);
-        return null;
-    }
-
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-    mem.writeBytes(cave, code);
-
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        original,
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
-}
-
-/**
- * IEEE-754 bits of a float, for encoding immediates.
- * @param {number} v
- * @returns {number}
- */
-export function f32bits(v) {
-    const b = new Uint8Array(4);
-    new DataView(b.buffer).setFloat32(0, v, true);
-    return b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
-}
-
-/**
- * Diagnostic companion to holdFieldAtSibling: records every entity pointer
- * the flag test accepts, instead of writing anything.
- *
- * Answers "is this flag actually unique to the player" with observation
- * rather than inference. The cave keeps a counter and a 32-slot ring:
- *
- *   cave+0xE00  qword      total matches
- *   cave+0xE08  qword[32]  the most recent rcx values
- *
- * @param {number} target
- * @param {number} stealLen
- * @param {number} flagPtrOff
- * @param {number} flagOff
- * @returns {(Detour & {
- *   slots: number,
- *   seen(): { count: number, entities: number[] },
- * }) | null}
- */
-export function logFlaggedEntities(target, stealLen, flagPtrOff, flagOff) {
-    if (!target || stealLen < 5) return null;
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
-
-    const cave = mem.alloc(0x1000, target);
-    if (!cave) return null;
-    const slots = cave + 0xe00;
-
-    const record = [
-        0x50,                              // push rax
-        0x52,                              // push rdx
-        0x48, 0xb8, ...u64(slots),         // mov rax, slots
-        0x48, 0x8b, 0x10,                  // mov rdx, [rax]      current count
-        0x48, 0xff, 0x00,                  // inc qword [rax]
-        0x48, 0x83, 0xe2, 0x1f,            // and rdx, 31         ring slot
-        0x48, 0x89, 0x4c, 0xd0, 0x08,      // mov [rax+rdx*8+8], rcx
-        0x5a,                              // pop rdx
-        0x58,                              // pop rax
-    ];
-    const code = [
-        0x51,                                  // push rcx
-        0x48, 0x8b, 0x49, flagPtrOff & 0xff,   // mov rcx, [rcx+flagPtrOff]
-        0x83, 0xb9, ...i32(flagOff), 0x00,     // cmp dword [rcx+flagOff], 0
-        0x59,                                  // pop rcx
-        0x74, record.length,                   // je skip
-        ...record,
-        ...original,
-        ...jmpAbs(target + stealLen),
-    ];
-    if (code.length > 0xe00) {
-        mem.free(cave);
-        return null;
-    }
-
-    const rel = cave - (target + 5);
-    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
-        mem.free(cave);
-        return null;
-    }
-    mem.writeBytes(cave, code);
-    mem.writeBytes(slots, u64(0));
-
-    const patch = [0xe9, ...i32(rel)];
-    while (patch.length < stealLen) patch.push(0x90);
-    if (!mem.writeBytes(target, patch)) {
-        mem.free(cave);
-        return null;
-    }
-
-    return {
-        target,
-        cave,
-        slots,
-        original,
-        seen() {
-            const n = mem.u64(slots);
-            const out = [];
-            for (let i = 0; i < 32; i++) {
-                const p = mem.u64(slots + 8 + i * 8);
-                if (p && !out.includes(p)) out.push(p);
-            }
-            return { count: n, entities: out };
-        },
-        restore() {
-            mem.writeBytes(target, original);
-            mem.free(cave);
-        },
-    };
 }

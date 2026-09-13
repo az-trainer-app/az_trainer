@@ -107,6 +107,15 @@ test('whileOn: a failure is not retried until switched off and on', () => {
     assert.equal(builds, 2);
 });
 
+test('whileFound: builds at the found address, and not at all when missing', () => {
+    install(createMem());
+    const seen = [];
+    const build = (at) => (seen.push(at), handle());
+    assert.equal(OPT.whileFound('found', true, () => BASE + 0x10, build), true);
+    assert.equal(OPT.whileFound('missing', true, () => 0, build), false);
+    assert.deepEqual(seen, [BASE + 0x10], 'build never ran for the missing site');
+});
+
 test('patchWhileOn: patches while on and puts the bytes back', () => {
     const fake = createMem();
     install(fake);
@@ -125,16 +134,4 @@ test('patchWhileOn: nothing to patch is a failure, not a crash', () => {
         false,
     );
     assert.deepEqual(fake.writes, []);
-});
-
-test('writeOnce: writes on change only, and again after switching off', () => {
-    install(createMem());
-    const seen = [];
-    const write = (v) => seen.push(v);
-    OPT.writeOnce('gold', true, 1000, write);
-    OPT.writeOnce('gold', true, 1000, write);
-    OPT.writeOnce('gold', true, 10000, write);
-    OPT.writeOnce('gold', false, 10000, write);
-    OPT.writeOnce('gold', true, 10000, write);
-    assert.deepEqual(seen, [1000, 10000, 10000]);
 });

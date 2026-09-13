@@ -11,21 +11,6 @@ import * as HOOK from './hook.js';
 /** @type {WeakMap<object, Map<string, { handle: Restorable | null, failed: boolean }>>} */
 const installed = new WeakMap();
 
-/** @type {WeakMap<object, Map<string, number>>} */
-const written = new WeakMap();
-
-/**
- * This process's slice of a store.
- * @template T
- * @param {WeakMap<object, Map<string, T>>} store
- * @returns {Map<string, T>}
- */
-function scoped(store) {
-    let m = store.get(mem);
-    if (!m) store.set(mem, (m = new Map()));
-    return m;
-}
-
 /**
  * Keep something applied while `on`, and restore it when `on` goes false.
  *
@@ -40,7 +25,8 @@ function scoped(store) {
  * @returns {boolean} whether it is applied now
  */
 export function whileOn(key, on, build) {
-    const all = scoped(installed);
+    let all = installed.get(mem);
+    if (!all) installed.set(mem, (all = new Map()));
     let s = all.get(key);
     if (!s) all.set(key, (s = { handle: null, failed: false }));
 
@@ -65,6 +51,22 @@ export function whileOn(key, on, build) {
 }
 
 /**
+ * whileOn() for the usual case: `build(addr)` at the address `find` returns.
+ *
+ * @param {string} key
+ * @param {boolean} on
+ * @param {() => number} find the address, or 0 when it is not there
+ * @param {(addr: number) => Restorable | null} build
+ * @returns {boolean}
+ */
+export function whileFound(key, on, find, build) {
+    return whileOn(key, on, () => {
+        const at = find();
+        return at ? build(at) : null;
+    });
+}
+
+/**
  * Byte-patch an address while `on`.
  *
  * @param {string} key
@@ -74,32 +76,5 @@ export function whileOn(key, on, build) {
  * @returns {boolean}
  */
 export function patchWhileOn(key, on, find, bytes) {
-    return whileOn(key, on, () => {
-        const at = find();
-        return at ? HOOK.patch(at, bytes) : null;
-    });
-}
-
-/**
- * Call `write(value)` once whenever `value` changes while `on`; forget it
- * when off, so switching on again writes again.
- *
- * For values the player keeps changing afterwards, like currency: set it
- * when asked, then leave it alone instead of fighting every purchase.
- *
- * @param {string} key
- * @param {boolean} on
- * @param {number} value
- * @param {(value: number) => void} write
- */
-export function writeOnce(key, on, value, write) {
-    const last = scoped(written);
-    if (!on) {
-        last.delete(key);
-        return;
-    }
-    if (last.get(key) !== value) {
-        write(value);
-        last.set(key, value);
-    }
+    return whileFound(key, on, find, (at) => HOOK.patch(at, bytes));
 }

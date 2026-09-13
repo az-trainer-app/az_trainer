@@ -27,12 +27,9 @@ const H = await import(HOOK_URL);
 
 /** Builders that leave a jump in the game, with arguments for each. */
 const detours = {
-    detour: (t) => H.detour(t, 7, [0x90]),
-    replace: (t) => H.replace(t, 7, [0x90]),
-    guardedScale: (t) => H.guardedScale(t, 5, 0x20),
-    guardedLoadMax: (t) => H.guardedLoadMax(t, 5, 0x08, 0x0c),
-    holdFieldAtSibling: (t) => H.holdFieldAtSibling(t, 7, 0x08, 0xf8, 0x40, 0x44),
-    logFlaggedEntities: (t) => H.logFlaggedEntities(t, 7, 0x08, 0xf8),
+    detour: (t, steal) => H.detour(t, steal, [0x90]),
+    holdFieldAtSibling: (t, steal) => H.holdFieldAtSibling(t, steal, 0x08, 0xf8, 0x40, 0x44),
+    cave: (t, steal) => H.cave(t, steal, () => true),
 };
 
 for (const [name, build] of Object.entries(detours)) {
@@ -42,7 +39,7 @@ for (const [name, build] of Object.entries(detours)) {
         const target = BASE + 0x1000;
         const steal = fake.original(target, 7);
 
-        const h = build(target);
+        const h = build(target, 7);
         assert.ok(h, 'installed');
 
         const site = fake.read(target, 5);
@@ -57,14 +54,28 @@ for (const [name, build] of Object.entries(detours)) {
 
     test(`${name}: refuses a steal shorter than a jump`, () => {
         install(createMem());
-        assert.equal(
-            name === 'guardedScale' || name === 'guardedLoadMax'
-                ? H[name](BASE, 4, 0, 0)
-                : H[name](BASE, 4, 0, 0, 0, 0),
-            null,
-        );
+        assert.equal(build(BASE, 4), null);
     });
 }
+
+test('cave: a failed fill frees the cave and leaves the target alone', () => {
+    const fake = createMem();
+    install(fake);
+    const target = BASE + 0x1800;
+    assert.equal(H.cave(target, 5, () => false), null);
+    assert.equal(fake.frees.length, 1);
+    assert.deepEqual(fake.read(target, 5), fake.original(target, 5));
+});
+
+test('cave: free: false keeps the cave after restore', () => {
+    const fake = createMem();
+    install(fake);
+    const target = BASE + 0x1c00;
+    const h = H.cave(target, 5, () => true, { free: false });
+    h.restore();
+    assert.deepEqual(fake.read(target, 5), fake.original(target, 5), 'original bytes back');
+    assert.deepEqual(fake.frees, [], 'cave kept');
+});
 
 test('detour: cave runs your code, then the stolen bytes, then jumps back', () => {
     const fake = createMem();

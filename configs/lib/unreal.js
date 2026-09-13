@@ -4,6 +4,8 @@
 // player Pawn are the same across UE5 titles. A game config imports this and
 // only supplies its own AttributeSet / component offsets.
 
+import * as SCAN from './scan.js';
+
 /**
  * An attribute's live value against its maximum.
  * @typedef {{ cur: number, max: number }} Reading
@@ -16,36 +18,14 @@ const GAME_INSTANCE = 0x1d8;
 const LOCAL_PLAYERS = 0x38;
 const PLAYER_CTRL = 0x30;
 const PAWN = 0x2f8;
-const PERSISTENT_LEVEL = 0x30; // UWorld -> ULevel
-const WORLD_SETTINGS = 0x2b0; // ULevel -> AWorldSettings
-
-let _gworld = 0;
 
 /**
- * Address of the GWorld pointer. Scanned once, then cached.
+ * Address of the GWorld pointer, scanned once per process.
  * @returns {number} 0 if the signature is not found
  */
 export function gworld() {
-    if (_gworld) return _gworld;
-    const hit = mem.aob(GWORLD_SIG);
-    if (!hit) return 0;
-    _gworld = mem.rip(hit, 3, 7);
-    return _gworld;
-}
-
-/**
- * The local APlayerController.
- * @returns {number} 0 when in a menu or loading
- */
-export function playerController() {
-    const gw = gworld();
-    if (!gw) return 0;
-    let p = mem.u64(gw); // UWorld
-    if (p) p = mem.u64(p + GAME_INSTANCE); // UGameInstance
-    if (p) p = mem.u64(p + LOCAL_PLAYERS); // TArray<ULocalPlayer*>
-    if (p) p = mem.u64(p); // LocalPlayers[0]
-    if (p) p = mem.u64(p + PLAYER_CTRL); // APlayerController
-    return p || 0;
+    const hit = SCAN.once(GWORLD_SIG);
+    return hit ? mem.rip(hit, 3, 7) : 0;
 }
 
 /**
@@ -64,22 +44,22 @@ export function chain(base, offsets) {
 }
 
 /**
+ * The local APlayerController: UWorld -> UGameInstance -> LocalPlayers[0] ->
+ * PlayerController.
+ * @returns {number} 0 when in a menu or loading
+ */
+export function playerController() {
+    const gw = gworld();
+    return gw ? chain(mem.u64(gw), [GAME_INSTANCE, LOCAL_PLAYERS, 0, PLAYER_CTRL]) : 0;
+}
+
+/**
  * The local player's Pawn.
  * @returns {number} 0 when in a menu or loading
  */
 export function pawn() {
     const pc = playerController();
     return pc ? mem.u64(pc + PAWN) || 0 : 0;
-}
-
-/**
- * The persistent level's AWorldSettings: time dilation, gravity and other
- * per-world settings.
- * @returns {number} 0 when no world is loaded
- */
-export function worldSettings() {
-    const gw = gworld();
-    return gw ? chain(mem.u64(gw), [PERSISTENT_LEVEL, WORLD_SETTINGS]) : 0;
 }
 
 /** @type {Map<string, { obj: number, vtable: number, since: number }>} */
@@ -139,42 +119,38 @@ export function attrGet(set, off) {
 }
 
 /**
- * Set both BaseValue and CurrentValue, so a recalculation does not undo it.
- * @param {number} set
- * @param {number} off
- * @param {number} v
- */
-export function attrSet(set, off, v) {
-    mem.writeF32(set + off + 0x8, v);
-    mem.writeF32(set + off + 0xc, v);
-}
-
-/**
- * Hold `attr` at the value of `maxAttr`.
- *
+ * Hold `attr` at `max`. Both BaseValue and CurrentValue are set, so a
+ * recalculation does not undo it.
  * @param {number} set
  * @param {number} attr
- * @param {number} maxAttr
+ * @param {number} max
  * @param {boolean} apply false reads without writing
  * @returns {Reading | null} null if the maximum is not readable yet
  */
-export function hold(set, attr, maxAttr, apply) {
-    let max = attrGet(set, maxAttr);
-    if (!(max > 0)) max = mem.f32(set + maxAttr + 0x8);
+function holdAt(set, attr, max, apply) {
     if (!(max > 0)) return null;
+    if (!apply) return { cur: attrGet(set, attr), max };
+    mem.writeF32(set + attr + 0x8, max);
+    mem.writeF32(set + attr + 0xc, max);
+    return { cur: max, max };
+}
 
-    let cur = attrGet(set, attr);
-    if (apply) {
-        attrSet(set, attr, max);
-        cur = max;
-    }
-    return { cur: cur, max: max };
+/**
+ * Hold `attr` at the value of `maxAttr` (its CurrentValue, else BaseValue).
+ * @param {number} set
+ * @param {number} attr
+ * @param {number} maxAttr
+ * @param {boolean} apply
+ * @returns {Reading | null}
+ */
+export function hold(set, attr, maxAttr, apply) {
+    const max = attrGet(set, maxAttr);
+    return holdAt(set, attr, max > 0 ? max : mem.f32(set + maxAttr + 0x8), apply);
 }
 
 /**
  * Like hold(), but the maximum is the product of two attributes
  * (segments x per-segment), so it tracks upgrades.
- *
  * @param {number} set
  * @param {number} attr
  * @param {number} aAttr
@@ -185,15 +161,7 @@ export function hold(set, attr, maxAttr, apply) {
 export function holdProduct(set, attr, aAttr, bAttr, apply) {
     const a = attrGet(set, aAttr);
     const b = attrGet(set, bAttr);
-    const max = a > 0 && b > 0 ? a * b : attrGet(set, attr);
-    if (!(max > 0)) return null;
-
-    let cur = attrGet(set, attr);
-    if (apply) {
-        attrSet(set, attr, max);
-        cur = max;
-    }
-    return { cur: cur, max: max };
+    return holdAt(set, attr, a > 0 && b > 0 ? a * b : attrGet(set, attr), apply);
 }
 
 /**
@@ -204,50 +172,4 @@ export function holdProduct(set, attr, aAttr, bAttr, apply) {
  */
 export function fmt(label, v) {
     return v ? label + '  ' + Math.round(v.cur) + ' / ' + Math.round(v.max) : undefined;
-}
-
-// --- constants with automatic restore ---------------------------------------
-
-/** @type {Map<number, number>} */
-const _saved = new Map();
-
-/**
- * Write a constant while `on`, remembering the original so it can be put back
- * when the option is switched off. Use for fields the game does not
- * recompute on its own (speeds, gravity, FOV).
- *
- * @param {number} addr
- * @param {number} value
- * @param {boolean} on
- */
-export function poke(addr, value, on) {
-    if (!addr) return;
-    if (on) {
-        if (!_saved.has(addr)) _saved.set(addr, mem.f32(addr));
-        mem.writeF32(addr, value);
-    } else if (_saved.has(addr)) {
-        mem.writeF32(addr, _saved.get(addr));
-        _saved.delete(addr);
-    }
-}
-
-/**
- * poke() both halves of an FGameplayAttributeData. Base and Current are both
- * set because the ability system recomputes Current from Base, so writing
- * only one gets undone on the next recalculation.
- *
- * @param {number} set
- * @param {number} attr
- * @param {number} value
- * @param {boolean} on
- */
-export function pokeAttr(set, attr, value, on) {
-    if (!set) return;
-    poke(set + attr + 0x8, value, on);
-    poke(set + attr + 0xc, value, on);
-}
-
-/** Drop remembered originals (call when the pawn changes, e.g. after a load). */
-export function forget() {
-    _saved.clear();
 }
