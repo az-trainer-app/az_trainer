@@ -1,0 +1,18 @@
+# Build output - except the runtime configs, which live next to the exe
+/target/*
+!/target/release/
+/target/release/*
+!/target/release/configs/
+
+# Per-user toggle state, written by the trainer
+*.settings
+
+# Scan dumps and captures produced by tools/
+tools/*.npz
+tools/*.npy
+tools/*.json
+__pycache__/
+*.pyc
+
+# Stale: build.rs now generates app.rc into OUT_DIR
+/app.rc
