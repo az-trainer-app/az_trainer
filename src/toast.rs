@@ -8,7 +8,7 @@
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-use windows::core::w;
+use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateFontW, CreateRoundRectRgn, CreateSolidBrush, DeleteObject, DrawTextW,
@@ -21,8 +21,9 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, GetForegroundWindow, GetWindowThreadProcessId,
-    RegisterClassW, SetLayeredWindowAttributes, SetWindowPos, ShowWindow, HWND_TOPMOST,
+    CreateWindowExW, DefWindowProcW, DestroyIcon, DrawIconEx, GetClientRect, GetForegroundWindow,
+    GetWindowThreadProcessId, LoadImageW, RegisterClassW, SetLayeredWindowAttributes, SetWindowPos,
+    ShowWindow, DI_NORMAL, HICON, HWND_TOPMOST, IMAGE_ICON, LR_DEFAULTCOLOR,
     LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, WM_ERASEBKGND, WM_NCHITTEST, WM_PAINT,
     WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_EX_TRANSPARENT, WS_POPUP,
@@ -36,15 +37,25 @@ const PANEL: COLORREF = COLORREF(0x00231b18);
 const TEXT: COLORREF = COLORREF(0x00e3dad6);
 const ACCENT: COLORREF = COLORREF(0x003b3bc2);
 
+/// Size of the app icon drawn before the text, in 96-dpi pixels.
+const ICON: f32 = 20.0;
+
 /// What WM_PAINT draws; set by `show` on the same thread.
 struct Paint {
     text: Vec<u16>,
     font: HFONT,
+    /// the exe's own icon (resource 1) at the current monitor's scale
+    icon: HICON,
     scale: f32,
 }
 
 thread_local! {
-    static PAINT: RefCell<Paint> = RefCell::new(Paint { text: Vec::new(), font: HFONT::default(), scale: 1.0 });
+    static PAINT: RefCell<Paint> = RefCell::new(Paint {
+        text: Vec::new(),
+        font: HFONT::default(),
+        icon: HICON::default(),
+        scale: 1.0,
+    });
 }
 
 pub struct Toast {
@@ -115,7 +126,18 @@ impl Toast {
                     if !p.font.is_invalid() {
                         let _ = DeleteObject(p.font);
                     }
+                    if !p.icon.is_invalid() {
+                        let _ = DestroyIcon(p.icon);
+                    }
                     p.font = CreateFontW(-px(15.0), 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, w!("Segoe UI"));
+                    p.icon = GetModuleHandleW(None)
+                        .ok()
+                        .and_then(|module| {
+                            let size = px(ICON);
+                            LoadImageW(module, PCWSTR(1 as *const u16), IMAGE_ICON, size, size, LR_DEFAULTCOLOR).ok()
+                        })
+                        .map(|h| HICON(h.0))
+                        .unwrap_or_default();
                     self.dpi = dpi;
                 }
                 p.text = wide.clone();
@@ -131,8 +153,9 @@ impl Toast {
             SelectObject(hdc, old);
             ReleaseDC(self.hwnd, hdc);
 
-            let width = measured.right - measured.left + px(4.0) + px(16.0) * 2;
-            let height = measured.bottom - measured.top + px(10.0) * 2;
+            // stripe, padding, icon, gap, text, padding
+            let width = px(4.0) + px(14.0) + px(ICON) + px(10.0) + (measured.right - measured.left) + px(16.0);
+            let height = (measured.bottom - measured.top).max(px(ICON)) + px(10.0) * 2;
             let margin = px(32.0);
             let x = info.rcMonitor.left + margin;
             let y = info.rcMonitor.bottom - margin - height;
@@ -169,9 +192,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 }
 
 unsafe fn paint(hwnd: HWND) {
-    let (mut text, font, scale) = PAINT.with(|p| {
+    let (mut text, font, icon, scale) = PAINT.with(|p| {
         let p = p.borrow();
-        (p.text.clone(), p.font, p.scale)
+        (p.text.clone(), p.font, p.icon, p.scale)
     });
     let px = |v: f32| (v * scale).round() as i32;
 
@@ -188,10 +211,17 @@ unsafe fn paint(hwnd: HWND) {
     FillRect(hdc, &stripe, accent);
     let _ = DeleteObject(accent);
 
+    let icon_left = stripe.right + px(14.0);
+    if !icon.is_invalid() {
+        let size = px(ICON);
+        let top = rc.top + (rc.bottom - rc.top - size) / 2;
+        let _ = DrawIconEx(hdc, icon_left, top, icon, size, size, 0, None, DI_NORMAL);
+    }
+
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, TEXT);
     let old = SelectObject(hdc, font);
-    let mut area = RECT { left: stripe.right + px(16.0), ..rc };
+    let mut area = RECT { left: icon_left + px(ICON) + px(10.0), ..rc };
     DrawTextW(hdc, &mut text, &mut area, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX);
     SelectObject(hdc, old);
     let _ = EndPaint(hwnd, &ps);
