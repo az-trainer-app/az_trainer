@@ -116,9 +116,7 @@ export const options = [
 
 Drop it in `configs/games/`, add `somegame.jpg` beside it for artwork, and start the game.
 
-An entry `{ separator: 'Heading' }` draws a titled divider between options, and `{ separator: true }` a
-plain line. Separators are not options: they have no tick and are never saved, so adding or moving one
-does not disturb anyone's settings.
+`{ separator: 'Heading' }` draws a titled divider between options; `{ separator: true }` a plain line.
 
 ### Editor support
 
@@ -128,9 +126,7 @@ Open the `configs` folder in VS Code (or any editor that runs the TypeScript lan
 - `host.d.ts` — the `mem` and `log` globals, documented.
 - `trainer.d.ts` — the shape of a config: `Option`, `Separator`, `TickArgs`.
 
-The libraries carry JSDoc types, so their imports complete and check too. Annotating `options` as in the
-example above flags a misspelled field or a wrong `tick` signature as you type. Run the same check from
-the command line with `npm run typecheck`.
+Command line: `npm run typecheck`.
 
 ## Compared with Cheat Engine tables
 
@@ -152,14 +148,8 @@ ported from them, and the two solve the same problem differently.
 | **Testing** | Manual, in the game | Automated: every script is checked against a fake game on each pull request |
 | **Updates** | Download a newer table manually | Scripts sync from GitHub automatically |
 
-**Where Cheat Engine is better:** discovery and complex injections. Its scanner, debugger and
-disassembler are how the values in these scripts were found in the first place, and Auto Assembler
-lets you write a multi-instruction cave as readable assembly instead of bytes. For researching a new
-game, use Cheat Engine.
-
-**Where AZ Trainer is better:** shipping the result. A script is short, reviewable in a diff, reuses
-libraries instead of repeating boilerplate, is tested automatically, and gives players a focused window
-that finds the game, remembers their choices and updates itself.
+**Use Cheat Engine** to research a game: finding values and writing complex injections.
+**Use AZ Trainer** to ship the result to players.
 
 ### Porting a CT entry
 
@@ -174,25 +164,17 @@ that finds the game, remembers their choices and updates itself.
 | Lua `readFloat` / `writeFloat` | `mem.f32(addr)` / `mem.writeF32(addr, v)` |
 | Frozen value (checkbox in the address list) | `mem.hold(addr, value)`, re-written at ~1 kHz |
 
-Two habits worth carrying over: prefer a signature to a fixed address, since a table's address list is
-usually stale after a game patch while its `aobscan` still works; and when a game runs every character
-through one routine, look for the flag the game itself uses to mark the player rather than guessing
-from values — `Infinite Health` in the Veilguard script is built on exactly that.
-
 ## Updates
 
 The trainer checks GitHub at startup and every six hours.
 
 - **App.** If the latest release is newer than the running version, the trainer downloads
   `az_trainer.exe`, verifies it against the release's `az_trainer.exe.sha256`, and swaps it in. A
-  **Restart** button appears; the running copy keeps working until you use it. A release without a
-  checksum is never installed.
+  **Restart** button appears.
 - **Scripts.** New and changed files under `configs/` on the `main` branch are downloaded and
-  hot-reloaded. Files are compared by git blob hash, so unchanged scripts are never re-downloaded.
-  A script you edited by hand is left alone — the trainer only replaces files it wrote itself.
+  hot-reloaded. Scripts you edited by hand are left alone.
 
-Neither runs from a development build (`target/release`) or a git checkout, where it would fight your
-working tree. Set `AZ_TRAINER_FORCE_UPDATE=1` to test it there.
+Updates are skipped in development builds and git checkouts (override: `AZ_TRAINER_FORCE_UPDATE=1`).
 
 While this repository is private, updates need a GitHub token: `AZ_TRAINER_TOKEN`, `GH_TOKEN`,
 `GITHUB_TOKEN`, or a logged-in [GitHub CLI](https://cli.github.com/) (`gh auth login`).
@@ -205,17 +187,14 @@ Requires Rust (stable) on Windows, and Node.js 22 or later for the script toolin
 cargo build --release
 ```
 
-Run `target/release/az_trainer.exe`. A build run from inside the repository reads the repository's own
-`configs/` folder, so script edits are tracked by git and picked up by hot reload.
-
-Run `az_trainer.exe --preview configs/games/<game>.js` to open a config's window without the game —
-useful for checking layout and taking screenshots. Nothing is attached and clicks are not saved.
+Run `target/release/az_trainer.exe`; it reads the repository's `configs/` folder.
+`--preview configs/games/<game>.js` opens a config's window without the game.
 
 Helper binaries:
 
 - `cfgcheck <config.js>` — load a script with the real loader and list what it exports.
 - `finder_test`, `detour_test` — exercise the breakpoint finder and detour code against a throwaway
-  process. Never develop injection code against a game you care about.
+  process.
 
 ## Tests
 
@@ -227,20 +206,12 @@ npm run format:check
 cargo test --release
 ```
 
-- **Golden hook bytes** (`tests/js/golden/hook.json`). Every `hook.js` builder runs against a fake game
-  and its output — each byte written, each cave allocated and freed — is compared with a recording
-  made from the version verified in the real games. A change to injected machine code fails the build
-  until it is re-verified and the golden file regenerated.
-- **Config contracts.** Every script in `configs/games` is loaded and ticked in two fake games: one where
-  no signature is found, which must not crash or patch anything, and one where every signature is found,
-  where switching every option on and then off must leave the game's code byte-identical and free every
-  cave.
-- **Libraries.** `scan.js`, `option.js`, the instruction encoders and `unreal.js` pointer walks.
-- **App.** Signature parsing, settings persistence, update logic, and loading every config in the real
-  QuickJS host.
+- **Golden hook bytes** — injected machine code must match `tests/js/golden/hook.json`.
+- **Config contracts** — every config survives a game where nothing is found, and leaves code
+  byte-identical after all options go on and off.
+- **Libraries** and **app** unit tests.
 
-GitHub Actions runs all of it on every pull request (`.github/workflows/ci.yml`). Scripts are formatted
-with Prettier; `npm run format` fixes formatting.
+All of it runs on every pull request. `npm run format` fixes formatting.
 
 ## Releasing
 
@@ -251,6 +222,5 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-The `release` workflow checks that the tag matches `Cargo.toml` — a mismatch would make installed
-trainers download the same release forever — then runs the tests, builds, and publishes
-`az_trainer.exe`, its checksum, and `az_trainer.zip` (exe plus `configs/`).
+The tag must match `Cargo.toml`. The `release` workflow tests, builds and publishes
+`az_trainer.exe`, its checksum and `az_trainer.zip`.
