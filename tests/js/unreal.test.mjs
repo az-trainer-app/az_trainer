@@ -31,6 +31,8 @@ const LOCAL_PLAYERS = HEAP + 0x300000;
 const LOCAL_PLAYER = HEAP + 0x400000;
 const CONTROLLER = HEAP + 0x500000;
 const PAWN = HEAP + 0x600000;
+const LEVEL = HEAP + 0xd00000;
+const WORLD_SETTINGS = HEAP + 0xe00000;
 
 /** A fake UE5 process with the whole walk from GWorld to the pawn in place. */
 function ue5World({ inMenu = false } = {}) {
@@ -42,6 +44,8 @@ function ue5World({ inMenu = false } = {}) {
     fake.poke(LOCAL_PLAYERS, le64(LOCAL_PLAYER));
     fake.poke(LOCAL_PLAYER + 0x30, le64(inMenu ? 0 : CONTROLLER));
     fake.poke(CONTROLLER + 0x2f8, le64(PAWN));
+    fake.poke(WORLD + 0x30, le64(LEVEL));
+    fake.poke(LEVEL + 0x2b0, le64(WORLD_SETTINGS));
     install(fake);
     return fake;
 }
@@ -52,6 +56,12 @@ test('walks GWorld to the player controller and pawn', async () => {
     assert.equal(UE.gworld(), GWORLD);
     assert.equal(UE.playerController(), CONTROLLER);
     assert.equal(UE.pawn(), PAWN);
+});
+
+test('finds WorldSettings through the persistent level', async () => {
+    ue5World();
+    const UE = await load();
+    assert.equal(UE.worldSettings(), WORLD_SETTINGS);
 });
 
 test('reports no pawn while in a menu', async () => {

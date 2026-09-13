@@ -16,6 +16,8 @@ const GAME_INSTANCE = 0x1d8;
 const LOCAL_PLAYERS = 0x38;
 const PLAYER_CTRL = 0x30;
 const PAWN = 0x2f8;
+const PERSISTENT_LEVEL = 0x30; // UWorld -> ULevel
+const WORLD_SETTINGS = 0x2b0; // ULevel -> AWorldSettings
 
 let _gworld = 0;
 
@@ -68,6 +70,16 @@ export function chain(base, offsets) {
 export function pawn() {
     const pc = playerController();
     return pc ? mem.u64(pc + PAWN) || 0 : 0;
+}
+
+/**
+ * The persistent level's AWorldSettings: time dilation, gravity and other
+ * per-world settings.
+ * @returns {number} 0 when no world is loaded
+ */
+export function worldSettings() {
+    const gw = gworld();
+    return gw ? chain(mem.u64(gw), [PERSISTENT_LEVEL, WORLD_SETTINGS]) : 0;
 }
 
 /**
