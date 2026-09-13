@@ -62,6 +62,7 @@ const BANNER_H: f32 = 108.0; // full-width art stripe, title overlaid on it
 const SEARCH_H: f32 = 170.0; // window height while no game is attached
 const DOTS: usize = 8;       // spinner dots
 const FOOTER_LINE_H: f32 = 30.0; // one update notice line
+const STATUS_H: f32 = 24.0; // config status bar at the very bottom
 const LINE_H: f32 = 24.0; // a live value line
 const ROW_H: f32 = 28.0; // a toggle row
 const SEP_H: f32 = 22.0; // a separator row
@@ -87,6 +88,10 @@ struct Trainer {
     staged: Option<SharedString>,
     /// what the last script sync changed
     note: Option<SharedString>,
+    /// loaded config's file, update date and checksum
+    config_info: Option<SharedString>,
+    /// the loaded config on GitHub, when the repository has it
+    config_url: Option<SharedString>,
 }
 
 /// Blend two packed RGB colours; `t` runs 0.0 (a) to 1.0 (b).
@@ -133,6 +138,8 @@ impl Trainer {
             updates: Arc::new(Mutex::new(update::State::default())),
             staged: None,
             note: None,
+            config_info: None,
+            config_url: None,
         };
         update::start(t.updates.clone());
         t.pull();
@@ -140,9 +147,14 @@ impl Trainer {
     }
 
     fn pull(&mut self) {
+        let rel = self.engine.shared.lock().ok().and_then(|s| s.config_rel.clone());
         if let Ok(u) = self.updates.lock() {
             self.staged = u.staged.clone().map(Into::into);
             self.note = u.note.clone().map(Into::into);
+            self.config_url = rel
+                .as_deref()
+                .and_then(|r| update::github_url(&u, r))
+                .map(Into::into);
         }
         let Ok(s) = self.engine.shared.lock() else { return };
         self.status = s.status.clone().into();
@@ -153,6 +165,7 @@ impl Trainer {
         };
         self.ready = s.ready;
         self.art = s.art.clone();
+        self.config_info = s.config_info.clone().map(Into::into);
         if s.ready {
             self.rows = s
                 .names
@@ -185,7 +198,8 @@ impl Trainer {
 
     /// Height needed to show everything, with no scrolling and no clipping.
     fn wanted_height(&self) -> f32 {
-        let footer = self.footer_lines() as f32 * FOOTER_LINE_H;
+        let footer = self.footer_lines() as f32 * FOOTER_LINE_H
+            + if self.status_bar_shown() { STATUS_H } else { 0.0 };
         if !self.ready {
             return SEARCH_H + footer;
         }
@@ -209,6 +223,49 @@ impl Trainer {
 
     fn footer_lines(&self) -> usize {
         self.staged.is_some() as usize + self.note.is_some() as usize
+    }
+
+    fn status_bar_shown(&self) -> bool {
+        self.ready && self.config_info.is_some()
+    }
+
+    /// One dim line pinned to the window's bottom edge, naming the loaded
+    /// config with its update date and checksum, plus a link to the original
+    /// when the repository has it.
+    fn status_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if !self.status_bar_shown() {
+            return None;
+        }
+        Some(
+            div()
+                .flex_none()
+                .h(px(STATUS_H))
+                .px(px(PAD))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .border_t_1()
+                .border_color(rgb(LINE))
+                .bg(rgb(PANEL))
+                .text_xs()
+                .text_color(rgb(DIM))
+                .child(div().overflow_hidden().children(self.config_info.clone()))
+                .children(self.config_url.clone().map(|url| {
+                    div()
+                        .id("github")
+                        .flex_none()
+                        .cursor_pointer()
+                        .text_color(rgb(TEXT))
+                        .hover(|d| d.text_color(rgb(ACCENT)))
+                        .child("source")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_this, _e, _w, cx| cx.open_url(&url)),
+                        )
+                }))
+                .into_any_element(),
+        )
     }
 
     /// Update notices, pinned under everything else. Absent when there is
@@ -527,6 +584,7 @@ impl Render for Trainer {
             ),
             )
             .children(self.footer(cx))
+            .children(self.status_bar(cx))
             .into_any_element()
     }
 }

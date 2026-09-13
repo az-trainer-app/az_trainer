@@ -32,6 +32,10 @@ pub struct Shared {
     pub level: Vec<usize>,
     pub values: Vec<Option<String>>,
     pub art: Option<PathBuf>,
+    /// status bar text for the loaded config: file, update date, checksum
+    pub config_info: Option<String>,
+    /// the loaded config relative to `configs/`, e.g. `games/dawnwalker.js`
+    pub config_rel: Option<String>,
     pub ready: bool,
 }
 
@@ -142,7 +146,49 @@ fn publish(s: &mut Shared, script: &Script, level: Vec<usize>) {
     s.level = level;
     s.values = script.options.iter().map(|_| None).collect();
     s.art = art::resolve(script);
+    s.config_info = Some(config_info(&script.path));
+    s.config_rel = script
+        .path
+        .file_name()
+        .map(|n| format!("games/{}", n.to_string_lossy()));
     s.ready = true;
+}
+
+/// `dawnwalker.js  ·  updated 2026-09-13  ·  sha256 1a2b3c4d5e6f`
+///
+/// The checksum covers the config file itself, so two people can tell at a
+/// glance whether they are running the same script.
+fn config_info(config: &Path) -> String {
+    use sha2::Digest;
+    let name = config
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let date = std::fs::metadata(config)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| ymd(d.as_secs()))
+        .unwrap_or_else(|| "unknown".into());
+    let sum = match std::fs::read(config) {
+        Ok(bytes) => crate::update::hex(&sha2::Sha256::digest(&bytes))[..12].to_string(),
+        Err(_) => "unreadable".into(),
+    };
+    format!("{name}  ·  updated {date}  ·  sha256 {sum}")
+}
+
+/// Seconds since the Unix epoch to a UTC `YYYY-MM-DD` (Hinnant's civil_from_days).
+fn ymd(secs: u64) -> String {
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + (m <= 2) as i64;
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 /// Set the state phrase. Every caller is a state where nothing is hooked, so
@@ -161,6 +207,8 @@ fn forget_game(shared: &Arc<Mutex<Shared>>, msg: &str) {
         s.status = msg.into();
         s.title.clear();
         s.art = None;
+        s.config_info = None;
+        s.config_rel = None;
         s.names.clear();
         s.separators.clear();
         s.shows.clear();
@@ -300,6 +348,9 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                 // nothing is on unless it was on last time: a trainer that
                 // enables itself is a trainer that surprises you
                 .map(|o| {
+                    if o.once {
+                        return 0; // one-shots always start off
+                    }
                     pending
                         .get(&o.name)
                         .copied()
@@ -357,8 +408,12 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
 
             let levels: Vec<usize> = shared.lock().map(|s| s.level.clone()).unwrap_or_default();
             if levels != saved_levels {
-                let names: Vec<String> =
-                    script.options.iter().map(|o| o.name.clone()).collect();
+                // one-shots are never saved, like separators
+                let names: Vec<String> = script
+                    .options
+                    .iter()
+                    .map(|o| if o.once { String::new() } else { o.name.clone() })
+                    .collect();
                 save_settings(&script.path, &names, &levels);
                 saved_levels = levels.clone();
             }
@@ -373,7 +428,14 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                     opt.levels.get(level.saturating_sub(1)).copied().unwrap_or(1.0)
                 };
 
-                let text = script.tick(i, on, mult);
+                let (text, done) = script.tick(i, on, mult);
+                if done && opt.once {
+                    if let Ok(mut s) = shared.lock() {
+                        if let Some(l) = s.level.get_mut(i) {
+                            *l = 0;
+                        }
+                    }
+                }
                 if text.is_some() {
                     live = true;
                 }

@@ -36,6 +36,9 @@ fn with_target<T>(f: impl FnOnce(&Target) -> T, default: T) -> T {
 pub struct OptMeta {
     /// `Some` for a divider row: its heading, or empty for a plain line.
     pub separator: Option<String>,
+    /// A one-shot action: switched back off once its tick returns `true`,
+    /// and never saved, so it cannot fire again on a later attach or load.
+    pub once: bool,
     pub name: String,
     pub show: Option<String>,
     pub levels: Vec<f32>,
@@ -136,6 +139,7 @@ impl Script {
                     levels,
                     labels,
                     separator,
+                    once: o.get::<_, bool>("once").unwrap_or(false),
                 });
             }
             Ok::<_, String>((process, title, art, metas))
@@ -164,25 +168,29 @@ impl Script {
         })
     }
 
-    /// Run one option's `tick({on, mult})`. Returns its display string, if any.
-    pub fn tick(&self, index: usize, on: bool, mult: f32) -> Option<String> {
+    /// Run one option's `tick({on, mult})`. Returns its display string, if
+    /// any, and whether it returned `true` - a one-shot saying it is done.
+    pub fn tick(&self, index: usize, on: bool, mult: f32) -> (Option<String>, bool) {
         self.ctx.with(|ctx| {
-            let opts: Value = ctx.globals().get("__options").ok()?;
-            let arr = opts.into_array()?;
-            let o: Object = arr.get(index).ok()?;
-            let f: Function = o.get("tick").ok()?;
+            let run = || -> Option<(Option<String>, bool)> {
+                let opts: Value = ctx.globals().get("__options").ok()?;
+                let arr = opts.into_array()?;
+                let o: Object = arr.get(index).ok()?;
+                let f: Function = o.get("tick").ok()?;
 
-            let arg = Object::new(ctx.clone()).ok()?;
-            arg.set("on", on).ok()?;
-            arg.set("mult", mult).ok()?;
+                let arg = Object::new(ctx.clone()).ok()?;
+                arg.set("on", on).ok()?;
+                arg.set("mult", mult).ok()?;
 
-            match f.call::<_, Value>((rquickjs::function::This(o), arg)).catch(&ctx) {
-                Ok(v) => v.get::<String>().ok(),
-                Err(e) => {
-                    eprintln!("tick error: {e}");
-                    None
+                match f.call::<_, Value>((rquickjs::function::This(o), arg)).catch(&ctx) {
+                    Ok(v) => Some((v.get::<String>().ok(), v.as_bool() == Some(true))),
+                    Err(e) => {
+                        eprintln!("tick error: {e}");
+                        None
+                    }
                 }
-            }
+            };
+            run().unwrap_or((None, false))
         })
     }
 
@@ -457,6 +465,20 @@ fn register_host(ctx: &Context) -> Result<(), String> {
             "moduleSize",
             Function::new(ctx.clone(), || -> f64 { with_target(|t| t.size as f64, 0.0) })
                 .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // The process's first thread. For Unreal that is the game thread, the
+        // only one allowed to touch UObjects - code caves compare against it.
+        mem.set(
+            "mainThreadId",
+            Function::new(ctx.clone(), || -> f64 {
+                with_target(
+                    |t| crate::finder::thread_ids(t.proc.pid).first().copied().unwrap_or(0) as f64,
+                    0.0,
+                )
+            })
+            .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
 

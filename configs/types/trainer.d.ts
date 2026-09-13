@@ -27,13 +27,20 @@ export interface Option {
     /** Reserve a value line under the options; `tick`'s return value fills it. */
     show?: string;
     /**
+     * A one-shot action rather than a setting: `tick` returns `true` once it
+     * has done its job, and the option switches itself back off. Never saved,
+     * so it cannot fire again on a later attach or load.
+     */
+    once?: boolean;
+    /**
      * Called every 100 ms whether the option is on or off, so it can both
      * apply and remove its effect. Keep the handles it creates and restore
      * them when `on` turns false - lib/option.js does this for you.
      *
-     * @returns a value line to display, when `show` is declared
+     * @returns a value line to display when `show` is declared, or `true`
+     *   when a `once` option is done
      */
-    tick(this: Option, args: TickArgs): string | undefined | void;
+    tick(this: Option, args: TickArgs): string | boolean | undefined | void;
 }
 
 /**

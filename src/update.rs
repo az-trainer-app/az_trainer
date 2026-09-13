@@ -31,6 +31,17 @@ pub struct State {
     pub staged: Option<String>,
     /// Summary of the last script sync, when it changed something.
     pub note: Option<String>,
+    /// Config paths (`games/dawnwalker.js`) present in the repository, as of
+    /// the last tree listing. Empty until one succeeds.
+    pub remote: std::collections::HashSet<String>,
+}
+
+/// Where a config lives on GitHub, when the last listing saw it there.
+pub fn github_url(state: &State, rel: &str) -> Option<String> {
+    state
+        .remote
+        .contains(rel)
+        .then(|| format!("https://github.com/{REPO}/blob/{BRANCH}/configs/{rel}"))
 }
 
 pub fn start(state: Arc<Mutex<State>>) {
@@ -154,11 +165,6 @@ fn sync_scripts(state: &Arc<Mutex<State>>, token: Option<&str>) -> Result<(), St
     let Some(dir) = crate::js::configs_dir() else {
         return Ok(());
     };
-    // A checkout is managed with git; pulling files into it behind the
-    // developer's back would fight their working tree.
-    if dir.ancestors().any(|d| d.join(".git").exists()) && !forced() {
-        return Ok(());
-    }
 
     let body = get(
         &format!("https://api.github.com/repos/{REPO}/git/trees/{BRANCH}?recursive=1"),
@@ -167,6 +173,24 @@ fn sync_scripts(state: &Arc<Mutex<State>>, token: Option<&str>) -> Result<(), St
     )?;
     let tree: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     let items = tree["tree"].as_array().ok_or("unexpected tree response")?;
+
+    // Recorded before the checkout test, so a dev build still links its
+    // configs to the repository.
+    let remote = items
+        .iter()
+        .filter(|i| i["type"].as_str() == Some("blob"))
+        .filter_map(|i| i["path"].as_str()?.strip_prefix("configs/"))
+        .map(str::to_owned)
+        .collect();
+    if let Ok(mut s) = state.lock() {
+        s.remote = remote;
+    }
+
+    // A checkout is managed with git; pulling files into it behind the
+    // developer's back would fight their working tree.
+    if dir.ancestors().any(|d| d.join(".git").exists()) && !forced() {
+        return Ok(());
+    }
 
     let record_path = dir.join(RECORD);
     let first_sync = !record_path.exists();
@@ -342,7 +366,7 @@ fn forced() -> bool {
     std::env::var_os("AZ_TRAINER_FORCE_UPDATE").is_some()
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

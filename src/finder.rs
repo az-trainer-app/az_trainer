@@ -50,7 +50,7 @@ pub struct Hit {
 #[repr(C, align(16))]
 struct AlignedContext(CONTEXT);
 
-fn thread_ids(pid: u32) -> Vec<u32> {
+pub(crate) fn thread_ids(pid: u32) -> Vec<u32> {
     let mut out = Vec::new();
     unsafe {
         let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else {

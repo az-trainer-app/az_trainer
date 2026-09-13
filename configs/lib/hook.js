@@ -198,7 +198,6 @@ export function guardedScale(target, stealLen, guardOffset) {
     //   0x1B mulss xmm1,[slotMult]
     //   0x23 <stolen>                   (skip lands here)
     //   ...  jmp   back
-    // prettier-ignore
     const code = [
         0x4c, 0x8b, 0x51, guardOffset & 0xff,                     // mov r10,[rcx+G]
         0x48, 0xff, 0x05, ...i32(slotCalls - (cave + 0x0b)),      // inc qword [calls]
@@ -472,7 +471,6 @@ export function guardedLoadMax(target, stealLen, curOff, maxOff) {
     if (!cave) return null;
     const slotAddr = cave + 0x40;
 
-    // prettier-ignore
     const code = [
         0x4c, 0x8d, 0x57, curOff & 0xff,                   // lea r10, [rdi+curOff]
         0x4c, 0x3b, 0x15, ...i32(slotAddr - (cave + 11)),  // cmp r10, [slotAddr]
@@ -557,14 +555,12 @@ export function holdFieldAtSibling(target, stealLen, flagPtrOff, flagOff, curOff
     const cave = mem.alloc(0x1000, target);
     if (!cave) return null;
 
-    // prettier-ignore
     const copy = [
         0x50,                          // push rax
         0x8b, 0x41, maxOff & 0xff,     // mov eax, [rcx+maxOff]
         0x89, 0x41, curOff & 0xff,     // mov [rcx+curOff], eax
         0x58,                          // pop rax
     ];
-    // prettier-ignore
     const code = [
         0x51,                                  // push rcx
         0x48, 0x8b, 0x49, flagPtrOff & 0xff,   // mov rcx, [rcx+flagPtrOff]
@@ -644,7 +640,6 @@ export function logFlaggedEntities(target, stealLen, flagPtrOff, flagOff) {
     if (!cave) return null;
     const slots = cave + 0xe00;
 
-    // prettier-ignore
     const record = [
         0x50,                              // push rax
         0x52,                              // push rdx
@@ -656,7 +651,6 @@ export function logFlaggedEntities(target, stealLen, flagPtrOff, flagOff) {
         0x5a,                              // pop rdx
         0x58,                              // pop rax
     ];
-    // prettier-ignore
     const code = [
         0x51,                                  // push rcx
         0x48, 0x8b, 0x49, flagPtrOff & 0xff,   // mov rcx, [rcx+flagPtrOff]

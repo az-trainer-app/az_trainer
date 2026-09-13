@@ -2,15 +2,12 @@
     "name": "az-trainer",
     "private": true,
     "type": "module",
-    "description": "Tooling for AZ Trainer's scripts: formatting, type checking and tests.",
+    "description": "Tooling for AZ Trainer's scripts: type checking and tests.",
     "scripts": {
         "test": "node --test \"tests/js/**/*.test.mjs\"",
-        "format": "prettier --write \"configs/**/*.js\" \"tests/**/*.mjs\"",
-        "format:check": "prettier --check \"configs/**/*.js\" \"tests/**/*.mjs\"",
         "typecheck": "tsc -p configs/jsconfig.json"
     },
     "devDependencies": {
-        "prettier": "3.9.6",
         "typescript": "5.9.3"
     }
 }

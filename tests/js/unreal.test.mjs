@@ -135,3 +135,31 @@ test('poke restores the original value when switched off', async () => {
     UE.poke(addr, 2400, false);
     assert.equal(fake.mem.f32(addr), 600);
 });
+
+test('settled: trusts an object only after it has stayed the same', async () => {
+    const fake = ue5World();
+    const UE = await load();
+    const obj = HEAP + 0xf00000;
+    fake.poke(obj, le64(BASE + 0x1234)); // vtable inside the module
+
+    const realNow = Date.now;
+    let now = 1000;
+    Date.now = () => now;
+    try {
+        assert.equal(UE.settled('k', obj, 1500), 0, 'first sighting');
+        now += 1000;
+        assert.equal(UE.settled('k', obj, 1500), 0, 'not long enough');
+        now += 600;
+        assert.equal(UE.settled('k', obj, 1500), obj, 'settled');
+
+        fake.poke(obj, le64(BASE + 0x9999)); // memory reused by another class
+        assert.equal(UE.settled('k', obj, 1500), 0, 'class changed');
+
+        fake.poke(obj, le64(HEAP)); // not a vtable in the game module
+        now += 5000;
+        assert.equal(UE.settled('k', obj, 1500), 0, 'not a live object');
+        assert.equal(UE.settled('k', 0, 1500), 0, 'null');
+    } finally {
+        Date.now = realNow;
+    }
+});

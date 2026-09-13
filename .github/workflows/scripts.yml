@@ -1,4 +1,4 @@
-# Script tooling: formatting, types and tests. Runs only when scripts change.
+# Script tooling: types and tests. Runs only when scripts change.
 name: scripts
 
 on:
@@ -8,7 +8,6 @@ on:
       - 'tests/**'
       - 'package.json'
       - 'package-lock.json'
-      - '.prettierrc'
       - '.github/workflows/scripts.yml'
   push:
     branches: [main]
@@ -20,7 +19,7 @@ concurrency:
 
 jobs:
   scripts:
-    name: Format, types, tests
+    name: Types, tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -29,6 +28,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run format:check
       - run: npm run typecheck
       - run: npm test

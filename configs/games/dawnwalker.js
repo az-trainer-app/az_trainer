@@ -45,7 +45,6 @@ const EFFECTIVE_DILATION_SIG =
  */
 function withoutGameSlowmo(site) {
     const b = mem.readBytes(site, 32);
-    // prettier-ignore
     return [
         0xf3, 0x0f, 0x10, 0x81, ...b.slice(12, 16),  // movss xmm0, [rcx+Matinee]
         0xf3, 0x0f, 0x59, 0x81, ...b.slice(20, 24),  // mulss xmm0, [rcx+DemoPlay]
@@ -54,7 +53,7 @@ function withoutGameSlowmo(site) {
     ];
 }
 
-// No Hit Reaction, ported from DawnwalkerTrainer 1.1.0. Two edits, both needed:
+// No Hit Reaction. Two edits, both needed:
 //
 // 1. A `test rax,rax / je rel32` on the hit path becomes `nop / jmp rel32`.
 const HIT_BRANCH_SIG =
@@ -88,7 +87,6 @@ function noHitActorHook(target) {
     }
     const slotPawn = cave + 0x40;
 
-    // prettier-ignore
     const code = [
         0x48, 0x3b, 0x1d, ...HOOK.i32(slotPawn - (cave + 7)), // cmp rbx,[slotPawn]
         0x75, 0x10,                                          // jne normal
@@ -117,14 +115,145 @@ function noHitActorHook(target) {
 /** @type {ReturnType<typeof noHitActorHook>} */
 let noHitActor = null;
 
-// Denarius is an inventory item (internal id "Coin"), not a standalone counter.
-//   PlayerController -> +0x368 -> +0x3C0 -> +0x2F8 -> +0x570 -> +0x318 -> +0x88C
-const MONEY_CHAIN = [0x368, 0x3c0, 0x2f8, 0x570, 0x318];
-const MONEY_OFF = 0x88c;
+// Denarius goes through the game's own currency functions, so whatever the
+// game does on a balance change still happens. Both take the inventory
+// component and a currency type, 0 being Denarius.
+const GET_CURRENCY_SIG = '40 53 48 83 EC 20 48 8B D9 44 8A C2 48 8B 89 28 04 00 00';
+const ADD_CURRENCY_SIG = '48 89 5C 24 10 57 48 83 EC 30 41 8B D8 48 8B F9 48 8B 89 28 04 00 00';
+
+// An inventory function entered with the component in rcx. The signature
+// matches 5 bytes in, after its `mov [rsp+10],rbx` prologue.
+const INVENTORY_SIG =
+    '55 48 8B EC 48 81 EC 80 00 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 45 F0 48 8B D9 E8 ?? ?? ?? ?? 84 C0 74 ?? E8 ?? ?? ?? ?? 83 65 A4 00';
+const INVENTORY_BACK = 5;
+
+// Cave data slots
+const SLOT_THREAD = 0xe0; // dword  game thread id; any other thread passes straight through
+const SLOT_PLAYER = 0xe8; // qword  owner to match against [rcx+20]; 0 = disarmed
+const SLOT_MONEY = 0xf0; // dword  requested balance; the cave zeroes it when done
+const SLOT_GET = 0x100;
+const SLOT_ADD = 0x108;
+const SLOT_RETURN = 0x110;
+
+// Changing currency fires UI notifications that build widgets. Doing that
+// off the game thread, or into a world that is loading, corrupts UObjects and
+// crashes a later load (UObjectHash.cpp "hash itself may be corrupted"). So
+// the cave only acts on the game thread, for an armed player, once.
+//
+//   mov  eax,gs:[48] / cmp eax,[Thread] / jne original
+//   mov  rax,[Player] / test rax,rax / je original
+//   cmp  [rcx+20],rax / jne original
+//   cmp  dword [Money],0 / jle original
+//   save rbx rcx rdx rsi rdi r8-r11, xmm0-5 (rsp ends aligned)
+//   esi = [Money]; [Money] = 0
+//   eax = GetCurrency(inv, 0)
+//   AddCurrency(inv, 0, esi - eax)
+//   restore
+//   original: mov [rsp+10],rbx / jmp [Return]
+const INVENTORY_CAVE = [
+    0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x3b, 0x05, 0xd2, 0x00, 0x00, 0x00, 0x0f, 0x85,
+    0xbe, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x05, 0xcd, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x0f, 0x84,
+    0xae, 0x00, 0x00, 0x00, 0x48, 0x39, 0x41, 0x20, 0x0f, 0x85, 0xa4, 0x00, 0x00, 0x00, 0x83, 0x3d,
+    0xbb, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x8e, 0x97, 0x00, 0x00, 0x00, 0x53, 0x51, 0x52, 0x56, 0x57,
+    0x41, 0x50, 0x41, 0x51, 0x41, 0x52, 0x41, 0x53, 0x48, 0x81, 0xec, 0x80, 0x00, 0x00, 0x00, 0x0f,
+    0x11, 0x44, 0x24, 0x20, 0x0f, 0x11, 0x4c, 0x24, 0x30, 0x0f, 0x11, 0x54, 0x24, 0x40, 0x0f, 0x11,
+    0x5c, 0x24, 0x50, 0x0f, 0x11, 0x64, 0x24, 0x60, 0x0f, 0x11, 0x6c, 0x24, 0x70, 0x31, 0xff, 0x8b,
+    0x35, 0x7b, 0x00, 0x00, 0x00, 0xc7, 0x05, 0x71, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48,
+    0x89, 0xcb, 0x89, 0xfa, 0x48, 0x8b, 0x05, 0x75, 0x00, 0x00, 0x00, 0xff, 0xd0, 0x29, 0xc6, 0x41,
+    0x89, 0xf0, 0x89, 0xfa, 0x48, 0x89, 0xd9, 0x48, 0x8b, 0x05, 0x6a, 0x00, 0x00, 0x00, 0xff, 0xd0,
+    0x0f, 0x10, 0x6c, 0x24, 0x70, 0x0f, 0x10, 0x64, 0x24, 0x60, 0x0f, 0x10, 0x5c, 0x24, 0x50, 0x0f,
+    0x10, 0x54, 0x24, 0x40, 0x0f, 0x10, 0x4c, 0x24, 0x30, 0x0f, 0x10, 0x44, 0x24, 0x20, 0x48, 0x81,
+    0xc4, 0x80, 0x00, 0x00, 0x00, 0x41, 0x5b, 0x41, 0x5a, 0x41, 0x59, 0x41, 0x58, 0x5f, 0x5e, 0x5a,
+    0x59, 0x5b, 0x48, 0x89, 0x5c, 0x24, 0x10, 0xff, 0x25, 0x33, 0x00, 0x00, 0x00,
+];
+
+// How long a Denarius click waits for the game to run the inventory function
+// (open the inventory, pick something up) before giving up.
+const DENARIUS_TIMEOUT_MS = 10000;
+
+/**
+ * Hook the inventory function with the currency cave.
+ * @returns {(import('../lib/hook.js').Restorable & {
+ *   arm(player: number, amount: number): boolean,
+ *   disarm(): void,
+ *   pending(): boolean,
+ * }) | null}
+ */
+function currencyHook() {
+    const hit = SCAN.once(INVENTORY_SIG);
+    const get = SCAN.once(GET_CURRENCY_SIG);
+    const add = SCAN.once(ADD_CURRENCY_SIG);
+    if (!hit || !get || !add) return null;
+    const target = hit - INVENTORY_BACK;
+
+    const original = mem.readBytes(target, INVENTORY_BACK);
+    if (!original || original.length !== INVENTORY_BACK) return null;
+    const cave = mem.alloc(0x1000, target);
+    if (!cave) return null;
+    const rel = cave - (target + 5);
+    if (rel > 0x7ffffff0 || rel < -0x7ffffff0) {
+        mem.free(cave);
+        return null;
+    }
+
+    const thread = mem.mainThreadId();
+    if (!thread) {
+        mem.free(cave);
+        return null;
+    }
+
+    mem.writeBytes(cave, INVENTORY_CAVE);
+    mem.writeBytes(cave + SLOT_THREAD, HOOK.i32(thread));
+    mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(0)); // disarmed
+    mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(0));
+    mem.writeBytes(cave + SLOT_GET, HOOK.u64(get));
+    mem.writeBytes(cave + SLOT_ADD, HOOK.u64(add));
+    mem.writeBytes(cave + SLOT_RETURN, HOOK.u64(target + INVENTORY_BACK));
+    if (!mem.writeBytes(target, [0xe9, ...HOOK.i32(rel)])) {
+        mem.free(cave);
+        return null;
+    }
+
+    const disarm = () => {
+        mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(0));
+        mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(0));
+    };
+    return {
+        arm(player, amount) {
+            // amount first would let a stale player slot fire it; player first
+            // with money still 0 fires nothing
+            return (
+                mem.writeBytes(cave + SLOT_PLAYER, HOOK.u64(player)) &&
+                mem.writeBytes(cave + SLOT_MONEY, HOOK.i32(amount))
+            );
+        },
+        disarm,
+        pending() {
+            return mem.i32(cave + SLOT_MONEY) !== 0;
+        },
+        restore() {
+            disarm();
+            mem.writeBytes(target, original);
+            // Deliberately not freed: the game thread may be inside the cave
+            // (in AddCurrency) at this moment, and returning into a freed page
+            // would crash. One page per use is a fair price.
+        },
+    };
+}
+
+/** @type {ReturnType<typeof currencyHook>} */
+let currency = null;
+let currencyArmed = false;
+let currencyDeadline = 0;
+
+/** The player's pawn, once it is safe to write to. */
+function pawn() {
+    return UE.settled('pawn', UE.pawn());
+}
 
 function humanSet() {
-    const p = UE.pawn();
-    return p ? UE.comp(p, HUMAN_SET) : 0;
+    const p = pawn();
+    return p ? UE.settled('human', UE.comp(p, HUMAN_SET)) : 0;
 }
 
 /** In-world once the pawn resolves. */
@@ -146,8 +275,8 @@ export const options = [
     {
         name: 'Infinite Vampiric Blood',
         tick({ on }) {
-            const p = UE.pawn();
-            const s = p ? UE.comp(p, VAMP_SET) : 0;
+            const p = pawn();
+            const s = p ? UE.settled('vampire', UE.comp(p, VAMP_SET)) : 0;
             if (!s) return;
             // max is segments x per-segment, so it tracks upgrades automatically
             return UE.fmt('Blood', UE.holdProduct(s, BLOOD, BLOOD_SEGMENTS, BLOOD_PER_SEGMENT, on));
@@ -213,7 +342,7 @@ export const options = [
         name: 'Speed',
         levels: [2, 4, 8],
         tick({ on, mult }) {
-            const p = UE.pawn();
+            const p = pawn();
             speedMult = on && p ? mult : 1;
             if (!on || !p) {
                 mem.clearHolds(); // the game restores it on its next frame
@@ -224,18 +353,53 @@ export const options = [
         },
     },
     {
-        // Reads your live balance; clicking an amount writes it once, so you
-        // can still spend normally afterwards (it is not locked).
+        // Sets your Denarius once per click, then switches itself off - always
+        // within DENARIUS_TIMEOUT_MS, whether or not it landed, so nothing
+        // stays armed into a save load. The cave does the work the next time
+        // the game thread runs the inventory function (open the inventory, or
+        // pick something up), by calling AddCurrency with the difference.
         name: 'Denarius',
-        levels: [1000, 10000, 100000],
-        labels: ['1k', '10k', '100k'],
+        // the game caps Denarius at 99,999
+        levels: [1000, 10000, 99999],
+        labels: ['1k', '10k', '99k'],
+        once: true,
         tick({ on, mult }) {
-            const pc = UE.playerController();
-            const obj = pc ? UE.chain(pc, MONEY_CHAIN) : 0;
-            if (!obj) return;
-            const addr = obj + MONEY_OFF;
-            OPT.writeOnce('denarius', on, mult, (v) => mem.writeBytes(addr, HOOK.i32(v)));
-            return 'Denarius  ' + mem.i32(addr);
+            const applied = OPT.whileOn('denarius', on, () => (currency = currencyHook()));
+            if (!on) {
+                currency = null;
+                currencyArmed = false;
+                currencyDeadline = 0;
+                return;
+            }
+            if (!applied || !currency) return true; // could not hook this build - give up
+
+            const now = Date.now();
+            if (!currencyDeadline) currencyDeadline = now + DENARIUS_TIMEOUT_MS;
+            const p = pawn(); // 0 while loading, or until the pawn has settled
+
+            if (!currencyArmed) {
+                if (p) currencyArmed = currency.arm(p, mult);
+                if (!currencyArmed && now > currencyDeadline) {
+                    log('Denarius: not in the world - nothing changed');
+                    return true;
+                }
+                return false;
+            }
+            if (!currency.pending()) {
+                currency.disarm();
+                return true; // applied
+            }
+            if (!p) {
+                currency.disarm(); // a load began: never fire into the next world
+                log('Denarius: cancelled by a load');
+                return true;
+            }
+            if (now > currencyDeadline) {
+                currency.disarm();
+                log('Denarius: timed out - open the inventory right after clicking');
+                return true;
+            }
+            return false;
         },
     },
 ];

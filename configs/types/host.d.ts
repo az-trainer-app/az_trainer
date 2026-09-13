@@ -52,6 +52,11 @@ interface Mem {
     moduleBase(): Address;
     /** Size of the main module in bytes. */
     moduleSize(): number;
+    /**
+     * Id of the process's first thread - Unreal's game thread. A cave that
+     * calls game functions should check `gs:[48]` against it. 0 if unknown.
+     */
+    mainThreadId(): number;
 
     // ---- code injection ------------------------------------------------
 

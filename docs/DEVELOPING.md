@@ -102,7 +102,6 @@ Helpers: `cfgcheck <config.js>`, `finder_test`, `detour_test`.
 npm install
 npm test
 npm run typecheck
-npm run format:check
 cargo test --release
 ```
 

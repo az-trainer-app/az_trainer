@@ -82,6 +82,39 @@ export function worldSettings() {
     return gw ? chain(mem.u64(gw), [PERSISTENT_LEVEL, WORLD_SETTINGS]) : 0;
 }
 
+/** @type {Map<string, { obj: number, vtable: number, since: number }>} */
+const _settled = new Map();
+
+/**
+ * `obj` once it has stayed the same live object for `ms`, otherwise 0.
+ *
+ * A load frees the old world's objects and hands their memory to new ones.
+ * Writing through a pointer read a moment too early lands in whatever took
+ * its place and corrupts it - which surfaces as a crash on a later load. So
+ * an object must keep the same address and the same class (its vtable,
+ * inside the game module) across ticks before anything writes to it.
+ *
+ * @param {string} key one per pointer being tracked
+ * @param {number} obj
+ * @param {number} [ms]
+ * @returns {number}
+ */
+export function settled(key, obj, ms = 1500) {
+    const vtable = obj ? mem.u64(obj) : 0;
+    const base = mem.moduleBase();
+    if (!vtable || vtable < base || vtable >= base + mem.moduleSize()) {
+        _settled.delete(key);
+        return 0;
+    }
+    const now = Date.now();
+    const seen = _settled.get(key);
+    if (!seen || seen.obj !== obj || seen.vtable !== vtable) {
+        _settled.set(key, { obj, vtable, since: now });
+        return 0;
+    }
+    return now - seen.since >= ms ? obj : 0;
+}
+
 /**
  * A component or sub-object hanging off an actor.
  * @param {number} actor
