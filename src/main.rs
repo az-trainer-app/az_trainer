@@ -4,7 +4,12 @@ mod art;
 mod engine;
 mod finder;
 mod hold;
+#[cfg(windows)]
+mod hotkey;
 mod js;
+mod keys;
+#[cfg(windows)]
+mod toast;
 mod mem;
 mod update;
 
@@ -19,15 +24,11 @@ use gpui::{
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
-/// Displayed as "AZ Trainer v1.0"; the value comes from Cargo.toml.
+/// Displayed as "AZ Trainer v1.0.1"; the value comes from Cargo.toml.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn app_title() -> String {
-    let mut it = VERSION.split('.');
-    match (it.next(), it.next()) {
-        (Some(maj), Some(min)) => format!("AZ Trainer v{maj}.{min}"),
-        _ => format!("AZ Trainer v{VERSION}"),
-    }
+    format!("AZ Trainer v{VERSION}")
 }
 
 const BG: u32 = 0x11131a;
@@ -41,6 +42,8 @@ struct Row {
     name: SharedString,
     levels: Vec<f32>,
     labels: Vec<String>,
+    /// shortcuts, one per level (one for a toggle)
+    keys: Vec<String>,
     level: usize,
     /// `Some` when this row is a divider: its heading, possibly empty
     separator: Option<SharedString>,
@@ -90,6 +93,8 @@ struct Trainer {
     config_info: Option<SharedString>,
     /// the loaded config on GitHub, when the repository has it
     config_url: Option<SharedString>,
+    /// shortcut of the control under the mouse, shown in the status bar
+    hint: Option<SharedString>,
 }
 
 /// Blend two packed RGB colours; `t` runs 0.0 (a) to 1.0 (b).
@@ -137,6 +142,7 @@ impl Trainer {
             staged: None,
             config_info: None,
             config_url: None,
+            hint: None,
         };
         update::start(t.updates.clone());
         t.pull();
@@ -162,6 +168,9 @@ impl Trainer {
         self.ready = s.ready;
         self.art = s.art.clone();
         self.config_info = s.config_info.clone().map(Into::into);
+        if !s.ready {
+            self.hint = None;
+        }
         if s.ready {
             self.rows = s
                 .names
@@ -171,6 +180,7 @@ impl Trainer {
                     name: n.clone().into(),
                     levels: s.levels.get(i).cloned().unwrap_or_default(),
                     labels: s.labels.get(i).cloned().unwrap_or_default(),
+                    keys: s.keys.get(i).cloned().unwrap_or_default(),
                     level: s.level.get(i).copied().unwrap_or(0),
                     separator: s.separators.get(i).cloned().flatten().map(Into::into),
                 })
@@ -225,9 +235,20 @@ impl Trainer {
         self.ready && self.config_info.is_some()
     }
 
+    /// Show `hint` in the status bar while hovered; clear it on leave, unless
+    /// another control has taken the bar over in between.
+    fn hover_hint(&mut self, hint: SharedString, hovered: bool) {
+        if hovered {
+            self.hint = Some(hint);
+        } else if self.hint.as_ref() == Some(&hint) {
+            self.hint = None;
+        }
+    }
+
     /// One dim line pinned to the window's bottom edge, naming the loaded
     /// config with its update date and checksum, plus a link to the original
-    /// when the repository has it.
+    /// when the repository has it. While a control with a shortcut is
+    /// hovered, it names the shortcut instead.
     fn status_bar(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         if !self.status_bar_shown() {
             return None;
@@ -246,7 +267,10 @@ impl Trainer {
                 .bg(rgb(PANEL))
                 .text_xs()
                 .text_color(rgb(DIM))
-                .child(div().overflow_hidden().children(self.config_info.clone()))
+                .child(match self.hint.clone() {
+                    Some(hint) => div().overflow_hidden().text_color(rgb(TEXT)).child(hint),
+                    None => div().overflow_hidden().children(self.config_info.clone()),
+                })
                 .children(self.config_url.clone().map(|url| {
                     div()
                         .id("github")
@@ -513,6 +537,17 @@ impl Render for Trainer {
                                     .flex()
                                     .items_center()
                                     .gap_2()
+                                    .when_some(
+                                        row.keys.first().filter(|_| !has_levels).cloned(),
+                                        |d, key| {
+                                            let hint: SharedString =
+                                                format!("{}  ·  {key}", row.name).into();
+                                            d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
+                                                this.hover_hint(hint.clone(), *hovered);
+                                                cx.notify();
+                                            }))
+                                        },
+                                    )
                                     .when(!has_levels, |d| {
                                         d.cursor_pointer()
                                             .on_mouse_down(
@@ -544,8 +579,20 @@ impl Render for Trainer {
                                 d.child(div().flex().gap_1().children(
                                     row.levels.iter().enumerate().map(|(k, mult)| {
                                         let sel = row.level == k + 1;
+                                        let caption = match row.labels.get(k) {
+                                            Some(l) => l.clone(),
+                                            None => format!("{}x", *mult as i32),
+                                        };
                                         div()
                                             .id(("lvl", (i * 16 + k) as u64))
+                                            .when_some(row.keys.get(k).cloned(), |d, key| {
+                                                let hint: SharedString =
+                                                    format!("{} {caption}  ·  {key}", row.name).into();
+                                                d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
+                                                    this.hover_hint(hint.clone(), *hovered);
+                                                    cx.notify();
+                                                }))
+                                            })
                                             .px_2()
                                             .py(px(1.))
                                             .rounded_sm()
@@ -563,10 +610,7 @@ impl Render for Trainer {
                                                     cx.notify();
                                                 }),
                                             )
-                                            .child(match row.labels.get(k) {
-                                                Some(l) => l.clone(),
-                                                None => format!("{}x", *mult as i32),
-                                            })
+                                            .child(caption)
                                     }),
                                 ))
                             })

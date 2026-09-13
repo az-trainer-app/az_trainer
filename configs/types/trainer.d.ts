@@ -24,6 +24,14 @@ export interface Option {
     levels?: number[];
     /** Pill captions, one per level. Defaults to `2x`, `4x`, ... */
     labels?: string[];
+    /**
+     * Global shortcuts, one per level - or one for a checkbox. Pressing one
+     * selects that level; pressing it again switches the option off.
+     * Modifiers (`Alt`, `Ctrl`, `Shift`, `Win`) plus one key: `F1`-`F24`,
+     * `A`-`Z`, `0`-`9` or `Num0`-`Num9`.
+     * @example ['Alt+F1', 'Alt+F2', 'Alt+F3']
+     */
+    keys?: string[];
     /** Reserve a value line under the options; `tick`'s return value fills it. */
     show?: string;
     /**

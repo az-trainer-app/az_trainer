@@ -1,6 +1,6 @@
 [package]
 name = "az_trainer"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 
 [dependencies]
@@ -24,6 +24,9 @@ features = [
     "Win32_System_Kernel",
     "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_HiDpi",
+    "Win32_Graphics_Gdi",
 ]
 
 [build-dependencies]

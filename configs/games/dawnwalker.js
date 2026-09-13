@@ -320,6 +320,7 @@ export const options = [
         // to a ~1kHz writer thread; a 10Hz write only flickers.
         name: 'Speed',
         levels: [2, 4, 8],
+        keys: ['Alt+F1', 'Alt+F2', 'Alt+F3'],
         tick({ on, mult }) {
             const p = pawn();
             speedMult = on && p ? mult : 1;

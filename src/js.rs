@@ -44,6 +44,8 @@ pub struct OptMeta {
     pub levels: Vec<f32>,
     /// optional pill captions; without these a level renders as "2x"
     pub labels: Vec<String>,
+    /// optional shortcuts, one per level (or one for a toggle), e.g. "Alt+F1"
+    pub keys: Vec<String>,
 }
 
 pub struct Script {
@@ -116,12 +118,15 @@ impl Script {
                     .and_then(|v| v.into_array())
                     .map(|a| a.iter::<f32>().flatten().collect())
                     .unwrap_or_default();
-                let labels: Vec<String> = o
-                    .get::<_, Value>("labels")
-                    .ok()
-                    .and_then(|v| v.into_array())
-                    .map(|a| a.iter::<String>().flatten().collect())
-                    .unwrap_or_default();
+                let strings = |field: &str| -> Vec<String> {
+                    o.get::<_, Value>(field)
+                        .ok()
+                        .and_then(|v| v.into_array())
+                        .map(|a| a.iter::<String>().flatten().collect())
+                        .unwrap_or_default()
+                };
+                let labels = strings("labels");
+                let keys = strings("keys");
                 // `{ separator: 'Title' }` or `{ separator: true }`
                 let separator = match o.get::<_, Value>("separator") {
                     Ok(v) if v.is_string() => v.get::<String>().ok(),
@@ -138,6 +143,7 @@ impl Script {
                     show: o.get::<_, String>("show").ok(),
                     levels,
                     labels,
+                    keys,
                     separator,
                     once: o.get::<_, bool>("once").unwrap_or(false),
                 });
@@ -575,6 +581,7 @@ mod tests {
             assert!(!script.options.is_empty(), "{file}: no options");
 
             let mut names = std::collections::HashSet::new();
+            let mut taken = std::collections::HashSet::new();
             for o in &script.options {
                 if o.separator.is_some() {
                     continue;
@@ -591,6 +598,17 @@ mod tests {
                     o.labels.len(),
                     o.levels.len()
                 );
+                assert!(
+                    o.keys.is_empty() || o.keys.len() == o.levels.len().max(1),
+                    "{file}: {:?} has {} keys for {} levels",
+                    o.name,
+                    o.keys.len(),
+                    o.levels.len()
+                );
+                for k in &o.keys {
+                    assert!(crate::keys::parse(k).is_some(), "{file}: {:?} bad key {k:?}", o.name);
+                    assert!(taken.insert(k.to_ascii_lowercase()), "{file}: key {k:?} used twice");
+                }
             }
             loaded += 1;
         }

@@ -11,6 +11,8 @@ mod finder;
 mod hold;
 #[path = "../js.rs"]
 mod js;
+#[path = "../keys.rs"]
+mod keys;
 #[path = "../art.rs"]
 mod art;
 

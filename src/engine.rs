@@ -28,6 +28,9 @@ pub struct Shared {
     pub levels: Vec<Vec<f32>>,
     /// per option: pill captions, when the config supplies them
     pub labels: Vec<Vec<String>>,
+    /// per option: shortcuts, one per level (one for a toggle); registered
+    /// system-wide while a game is attached
+    pub keys: Vec<Vec<String>>,
     /// per option: 0 = off, else 1-based index into `levels` (1 = on for toggles)
     pub level: Vec<usize>,
     pub values: Vec<Option<String>>,
@@ -54,6 +57,8 @@ impl Engine {
         let quit = Arc::new(AtomicBool::new(false));
         let (s, q) = (shared.clone(), quit.clone());
         let worker = Some(std::thread::spawn(move || run(s, q)));
+        #[cfg(windows)]
+        crate::hotkey::start(shared.clone());
         Engine { shared, quit, worker }
     }
 
@@ -110,10 +115,36 @@ impl Engine {
 
     /// Pick a specific level directly (clicking a 2x / 4x / 8x pill).
     pub fn set_level(&self, idx: usize, level: usize) {
-        if let Ok(mut s) = self.shared.lock() {
-            if let Some(l) = s.level.get_mut(idx) {
-                *l = if *l == level { 0 } else { level };
-            }
+        press(&self.shared, idx, level);
+    }
+}
+
+/// An option's state for a toast: `"Speed: 4x"`, `"Speed: 1x"` when off,
+/// `"Infinite Health: ON"`, or a level's own caption (`"Denarius: 99k"`).
+pub fn describe(shared: &Arc<Mutex<Shared>>, idx: usize) -> Option<String> {
+    let s = shared.lock().ok()?;
+    let name = s.names.get(idx)?;
+    let level = s.level.get(idx).copied().unwrap_or(0);
+    let levels = s.levels.get(idx).map(Vec::as_slice).unwrap_or_default();
+    let labels = s.labels.get(idx).map(Vec::as_slice).unwrap_or_default();
+    let multiplier = |v: f32| format!("{}x", v);
+    let state = match (levels.is_empty(), level) {
+        (true, 0) => "OFF".to_string(),
+        (true, _) => "ON".to_string(),
+        // plain multipliers read as 1x when off; captioned levels just say OFF
+        (false, 0) if labels.is_empty() => multiplier(1.0),
+        (false, 0) => "OFF".to_string(),
+        (false, l) => labels.get(l - 1).cloned().unwrap_or_else(|| multiplier(levels[l - 1])),
+    };
+    Some(format!("{name}: {state}"))
+}
+
+/// Select `level` (1-based) of an option, or switch it off when that level is
+/// already selected - a pill click and a shortcut behave the same.
+pub fn press(shared: &Arc<Mutex<Shared>>, idx: usize, level: usize) {
+    if let Ok(mut s) = shared.lock() {
+        if let Some(l) = s.level.get_mut(idx) {
+            *l = if *l == level { 0 } else { level };
         }
     }
 }
@@ -143,6 +174,7 @@ fn publish(s: &mut Shared, script: &Script, level: Vec<usize>) {
     s.shows = script.options.iter().map(|o| o.show.clone()).collect();
     s.levels = script.options.iter().map(|o| o.levels.clone()).collect();
     s.labels = script.options.iter().map(|o| o.labels.clone()).collect();
+    s.keys = script.options.iter().map(|o| o.keys.clone()).collect();
     s.level = level;
     s.values = script.options.iter().map(|_| None).collect();
     s.art = art::resolve(script);
@@ -214,6 +246,7 @@ fn forget_game(shared: &Arc<Mutex<Shared>>, msg: &str) {
         s.shows.clear();
         s.levels.clear();
         s.labels.clear();
+        s.keys.clear(); // releases the shortcuts for other programs
         s.level.clear();
         s.values.clear();
     }
@@ -473,6 +506,43 @@ fn turn_all_off(script: &Script) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Speed (plain multipliers), a checkbox, and captioned levels.
+    fn shortcut_state() -> Arc<Mutex<Shared>> {
+        Arc::new(Mutex::new(Shared {
+            names: vec!["Speed".into(), "Infinite Health".into(), "Denarius".into()],
+            levels: vec![vec![2.0, 4.0, 8.0], vec![], vec![1000.0, 10000.0, 99999.0]],
+            labels: vec![vec![], vec![], vec!["1k".into(), "10k".into(), "99k".into()]],
+            level: vec![0, 0, 0],
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn a_shortcut_selects_its_level_and_a_repeat_switches_it_off() {
+        let s = shortcut_state();
+        assert_eq!(describe(&s, 0).as_deref(), Some("Speed: 1x"), "off reads as 1x");
+        press(&s, 0, 2);
+        assert_eq!(describe(&s, 0).as_deref(), Some("Speed: 4x"));
+        press(&s, 0, 3);
+        assert_eq!(describe(&s, 0).as_deref(), Some("Speed: 8x"), "another level switches over");
+        press(&s, 0, 3);
+        assert_eq!(describe(&s, 0).as_deref(), Some("Speed: 1x"), "the same key again turns it off");
+    }
+
+    #[test]
+    fn toasts_say_on_off_for_checkboxes_and_use_level_captions() {
+        let s = shortcut_state();
+        press(&s, 1, 1);
+        assert_eq!(describe(&s, 1).as_deref(), Some("Infinite Health: ON"));
+        press(&s, 1, 1);
+        assert_eq!(describe(&s, 1).as_deref(), Some("Infinite Health: OFF"));
+        press(&s, 2, 3);
+        assert_eq!(describe(&s, 2).as_deref(), Some("Denarius: 99k"));
+        press(&s, 2, 3);
+        assert_eq!(describe(&s, 2).as_deref(), Some("Denarius: OFF"), "captioned levels do not read as 1x");
+        assert_eq!(describe(&s, 9), None);
+    }
 
     fn temp_config(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("az_trainer_{tag}_{}", std::process::id()));

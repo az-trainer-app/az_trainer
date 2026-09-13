@@ -10,6 +10,7 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 
 - Detects the running game automatically
 - Remembers your settings per game
+- Keyboard shortcuts (e.g. Alt+F1-F3 for speed), with a brief on-screen notice in game
 - Updates itself, including new games and fixes
 - Shows which script is loaded: its update date, checksum and a link to its source
 
