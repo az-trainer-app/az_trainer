@@ -34,6 +34,8 @@ fn with_target<T>(f: impl FnOnce(&Target) -> T, default: T) -> T {
 
 #[derive(Debug, Clone)]
 pub struct OptMeta {
+    /// `Some` for a divider row: its heading, or empty for a plain line.
+    pub separator: Option<String>,
     pub name: String,
     pub show: Option<String>,
     pub levels: Vec<f32>,
@@ -117,11 +119,23 @@ impl Script {
                     .and_then(|v| v.into_array())
                     .map(|a| a.iter::<String>().flatten().collect())
                     .unwrap_or_default();
+                // `{ separator: 'Title' }` or `{ separator: true }`
+                let separator = match o.get::<_, Value>("separator") {
+                    Ok(v) if v.is_string() => v.get::<String>().ok(),
+                    Ok(v) if v.as_bool() == Some(true) => Some(String::new()),
+                    _ => None,
+                };
                 metas.push(OptMeta {
-                    name: o.get("name").unwrap_or_else(|_| format!("option {i}")),
+                    // a separator has no name, so it is never saved as a setting
+                    name: if separator.is_some() {
+                        String::new()
+                    } else {
+                        o.get("name").unwrap_or_else(|_| format!("option {i}"))
+                    },
                     show: o.get::<_, String>("show").ok(),
                     levels,
                     labels,
+                    separator,
                 });
             }
             Ok::<_, String>((process, title, art, metas))
@@ -175,11 +189,7 @@ impl Script {
     /// Every `configs/games/*.js` beside the executable.
     pub fn discover() -> Vec<PathBuf> {
         let mut out = Vec::new();
-        let Ok(exe) = std::env::current_exe() else { return out };
-        let dir = exe
-            .parent()
-            .map(|p| p.join("configs").join("games"))
-            .unwrap_or_default();
+        let Some(dir) = configs_dir().map(|c| c.join("games")) else { return out };
         if let Ok(entries) = std::fs::read_dir(dir) {
             for e in entries.flatten() {
                 let p = e.path();
@@ -190,6 +200,20 @@ impl Script {
         }
         out
     }
+}
+
+/// The `configs` folder in use: beside the exe when installed, otherwise the
+/// nearest ancestor that has one.
+///
+/// The fallback is what lets a `target/release` build run straight from a
+/// checkout, reading the repo's own `configs/` - so edits are tracked by git
+/// and `cargo clean` cannot delete them.
+pub fn configs_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .skip(1)
+        .map(|d| d.join("configs"))
+        .find(|c| c.join("games").is_dir())
 }
 
 /// Strip Windows' `\\?\` verbatim prefix and normalise separators.
@@ -388,7 +412,7 @@ fn register_host(ctx: &Context) -> Result<(), String> {
                                     .take(12)
                                     .map(|h| {
                                         let off = match h.module_offset {
-                                            Some(o) => format!("Dawnwalker.exe+0x{o:X}"),
+                                            Some(o) => format!("module+0x{o:X}"),
                                             None => "outside main module".into(),
                                         };
                                         let before: Vec<String> = h
@@ -502,4 +526,77 @@ fn register_host(ctx: &Context) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every shipped config must load in the real QuickJS host - not just
+    /// parse under Node - and satisfy what the engine relies on.
+    #[test]
+    fn every_game_config_loads() {
+        let games = Path::new(env!("CARGO_MANIFEST_DIR")).join("configs").join("games");
+        let mut loaded = 0;
+        for entry in std::fs::read_dir(&games).expect("configs/games") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("js") {
+                continue;
+            }
+            let file = path.display().to_string();
+            let script = Script::load(&path).unwrap_or_else(|e| panic!("{file}: {e}"));
+
+            assert!(script.process.to_ascii_lowercase().ends_with(".exe"), "{file}: process");
+            assert!(!script.title.is_empty(), "{file}: title");
+            assert!(!script.options.is_empty(), "{file}: no options");
+
+            let mut names = std::collections::HashSet::new();
+            for o in &script.options {
+                if o.separator.is_some() {
+                    continue;
+                }
+                assert!(
+                    names.insert(o.name.clone()),
+                    "{file}: duplicate option {:?} - settings are saved by name",
+                    o.name
+                );
+                assert!(
+                    o.labels.is_empty() || o.labels.len() == o.levels.len(),
+                    "{file}: {:?} has {} labels for {} levels",
+                    o.name,
+                    o.labels.len(),
+                    o.levels.len()
+                );
+            }
+            loaded += 1;
+        }
+        assert!(loaded > 0, "no configs found in {}", games.display());
+    }
+
+    #[test]
+    fn separators_parse_with_and_without_a_title() {
+        let dir = std::env::temp_dir().join(format!("az_trainer_sep_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sep.js");
+        std::fs::write(
+            &path,
+            "export const process = 'X.exe';\n\
+             export const title = 'X';\n\
+             export const options = [\n\
+               { separator: 'Combat' },\n\
+               { name: 'A', tick() {} },\n\
+               { separator: true },\n\
+               { name: 'B', tick() {} },\n\
+             ];\n",
+        )
+        .unwrap();
+
+        let script = Script::load(&path).unwrap();
+        let kinds: Vec<Option<String>> =
+            script.options.iter().map(|o| o.separator.clone()).collect();
+        assert_eq!(kinds, vec![Some("Combat".into()), None, Some(String::new()), None]);
+        assert_eq!(script.options[1].name, "A");
+        assert_eq!(script.options[0].name, "", "separators are never saved");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

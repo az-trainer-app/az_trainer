@@ -1,0 +1,8 @@
+# Scripts are compared with GitHub by git blob hash, which is computed over
+# LF content. A CRLF checkout (the Windows default) would make every
+# installed script look edited.
+*.js text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.yml text eol=lf

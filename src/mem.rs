@@ -402,3 +402,34 @@ impl Proc {
         ok && put == data.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Pattern;
+
+    #[test]
+    fn matches_exact_and_wildcard_bytes() {
+        let p = Pattern::parse("48 8B ?? 4?").unwrap();
+        assert_eq!(p.len(), 4);
+        assert!(p.matches(&[0x48, 0x8B, 0x00, 0x40]));
+        assert!(p.matches(&[0x48, 0x8B, 0xFF, 0x4F]));
+        assert!(!p.matches(&[0x48, 0x8B, 0x00, 0x50]), "high nibble must match");
+        assert!(!p.matches(&[0x49, 0x8B, 0x00, 0x40]));
+    }
+
+    #[test]
+    fn low_nibble_wildcard() {
+        let p = Pattern::parse("?F").unwrap();
+        assert!(p.matches(&[0x0F]));
+        assert!(p.matches(&[0xFF]));
+        assert!(!p.matches(&[0xFE]));
+    }
+
+    #[test]
+    fn rejects_malformed_signatures() {
+        assert!(Pattern::parse("").is_none());
+        assert!(Pattern::parse("4").is_none());
+        assert!(Pattern::parse("488B").is_none());
+        assert!(Pattern::parse("48 8G").is_none());
+    }
+}

@@ -1,0 +1,53 @@
+# Push a tag like v1.1.0 to build and publish a release. Installed trainers
+# pick it up through their updater.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The updater compares the tag with the version compiled into the exe.
+      # If they disagree it would download the same release on every check.
+      - name: Tag must match Cargo.toml
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") {
+            throw "tag ${{ github.ref_name }} does not match Cargo.toml version $v"
+          }
+
+      - name: Test
+        run: cargo test --release --bin az_trainer
+
+      - name: Build
+        run: cargo build --release --bin az_trainer
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/az_trainer.exe dist/
+          $hash = (Get-FileHash dist/az_trainer.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path dist/az_trainer.exe.sha256 -Value "$hash  az_trainer.exe" -Encoding ascii -NoNewline
+          Copy-Item -Recurse configs dist/configs
+          Get-ChildItem dist/configs -Recurse -Force -Include *.settings, .sync.json | Remove-Item
+          Compress-Archive -Path dist/az_trainer.exe, dist/configs -DestinationPath dist/az_trainer.zip
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create ${{ github.ref_name }}
+          dist/az_trainer.exe dist/az_trainer.exe.sha256 dist/az_trainer.zip
+          --title "AZ Trainer ${{ github.ref_name }}" --generate-notes

@@ -6,8 +6,10 @@ mod finder;
 mod hold;
 mod js;
 mod mem;
+mod update;
 
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use engine::Engine;
@@ -30,6 +32,7 @@ fn app_title() -> String {
 
 const BG: u32 = 0x11131a;
 const PANEL: u32 = 0x181b23;
+const LINE: u32 = 0x2a2f3a;
 const TEXT: u32 = 0xd6dae3;
 const DIM: u32 = 0x7c8595;
 const ACCENT: u32 = 0xc23b3b;
@@ -39,6 +42,18 @@ struct Row {
     levels: Vec<f32>,
     labels: Vec<String>,
     level: usize,
+    /// `Some` when this row is a divider: its heading, possibly empty
+    separator: Option<SharedString>,
+}
+
+impl Row {
+    fn height(&self) -> f32 {
+        if self.separator.is_some() {
+            SEP_H
+        } else {
+            ROW_H
+        }
+    }
 }
 
 // layout metrics, also used to compute the window height
@@ -46,8 +61,10 @@ const PAD: f32 = 14.0; // outer padding on every side
 const BANNER_H: f32 = 108.0; // full-width art stripe, title overlaid on it
 const SEARCH_H: f32 = 170.0; // window height while no game is attached
 const DOTS: usize = 8;       // spinner dots
+const FOOTER_LINE_H: f32 = 30.0; // one update notice line
 const LINE_H: f32 = 24.0; // a live value line
 const ROW_H: f32 = 28.0; // a toggle row
+const SEP_H: f32 = 22.0; // a separator row
 const GAP: f32 = 6.0;
 const SECTION_GAP: f32 = 12.0;
 const WIDTH: f32 = 420.0;
@@ -65,6 +82,11 @@ struct Trainer {
     frame: usize,
     /// last titlebar text we set, so we only touch the window on change
     titled: String,
+    updates: Arc<Mutex<update::State>>,
+    /// version installed by the updater, waiting for a restart
+    staged: Option<SharedString>,
+    /// what the last script sync changed
+    note: Option<SharedString>,
 }
 
 /// Blend two packed RGB colours; `t` runs 0.0 (a) to 1.0 (b).
@@ -96,7 +118,10 @@ impl Trainer {
         .detach();
 
         let mut t = Trainer {
-            engine: Engine::start(),
+            engine: match preview_arg() {
+                Some(config) => Engine::preview(config),
+                None => Engine::start(),
+            },
             title: "AZ Trainer".into(),
             status: "starting...".into(),
             rows: Vec::new(),
@@ -105,12 +130,20 @@ impl Trainer {
             ready: false,
             frame: 0,
             titled: String::new(),
+            updates: Arc::new(Mutex::new(update::State::default())),
+            staged: None,
+            note: None,
         };
+        update::start(t.updates.clone());
         t.pull();
         t
     }
 
     fn pull(&mut self) {
+        if let Ok(u) = self.updates.lock() {
+            self.staged = u.staged.clone().map(Into::into);
+            self.note = u.note.clone().map(Into::into);
+        }
         let Ok(s) = self.engine.shared.lock() else { return };
         self.status = s.status.clone().into();
         self.title = if s.title.is_empty() {
@@ -130,6 +163,7 @@ impl Trainer {
                     levels: s.levels.get(i).cloned().unwrap_or_default(),
                     labels: s.labels.get(i).cloned().unwrap_or_default(),
                     level: s.level.get(i).copied().unwrap_or(0),
+                    separator: s.separators.get(i).cloned().flatten().map(Into::into),
                 })
                 .collect();
             // one line per option that declares `show`, so the layout does not
@@ -151,8 +185,9 @@ impl Trainer {
 
     /// Height needed to show everything, with no scrolling and no clipping.
     fn wanted_height(&self) -> f32 {
+        let footer = self.footer_lines() as f32 * FOOTER_LINE_H;
         if !self.ready {
-            return SEARCH_H;
+            return SEARCH_H + footer;
         }
         let values = self.values.len() as f32;
         let rows = self.rows.len() as f32;
@@ -163,13 +198,100 @@ impl Trainer {
             blocks += 1;
         }
         if rows > 0.0 {
-            h += rows * ROW_H + (rows - 1.0).max(0.0) * GAP;
+            h += self.rows.iter().map(Row::height).sum::<f32>() + (rows - 1.0).max(0.0) * GAP;
             blocks += 1;
         }
         if blocks == 2 {
             h += SECTION_GAP;
         }
-        h
+        h + footer
+    }
+
+    fn footer_lines(&self) -> usize {
+        self.staged.is_some() as usize + self.note.is_some() as usize
+    }
+
+    /// Update notices, pinned under everything else. Absent when there is
+    /// nothing to say, so the window does not carry an empty strip.
+    fn footer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.footer_lines() == 0 {
+            return None;
+        }
+        let line = || {
+            div()
+                .h(px(FOOTER_LINE_H))
+                .px(px(PAD))
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_xs()
+        };
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .bg(rgb(PANEL))
+                .children(self.staged.clone().map(|v| {
+                    line()
+                        .child(
+                            div()
+                                .text_color(rgb(TEXT))
+                                .child(format!("Version {v} installed")),
+                        )
+                        .child(
+                            div()
+                                .id("restart")
+                                .px_2()
+                                .py(px(2.))
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .bg(rgb(ACCENT))
+                                .text_color(rgb(0xffffff))
+                                .child("Restart")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _e, _w, cx| this.restart(cx)),
+                                ),
+                        )
+                }))
+                .children(
+                    self.note
+                        .clone()
+                        .map(|n| line().child(div().text_color(rgb(DIM)).child(n))),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Hand over to the freshly installed exe.
+    ///
+    /// The engine is shut down first and the new instance is told to wait for
+    /// this process to exit, so the game is fully unpatched before anything
+    /// tries to patch it again.
+    fn restart(&mut self, cx: &mut Context<Self>) {
+        self.engine.shutdown();
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = std::process::Command::new(exe)
+                .args(["--wait-pid", &std::process::id().to_string()])
+                .spawn();
+        }
+        cx.quit();
+    }
+}
+
+/// A divider between groups of options: `── Heading ──────`, or a plain line
+/// when the heading is empty.
+fn separator(heading: &SharedString) -> gpui::AnyElement {
+    let line = || div().h(px(1.)).bg(rgb(LINE));
+    let row = div().h(px(SEP_H)).flex().items_center().gap_2().px_2();
+    if heading.is_empty() {
+        row.child(line().flex_1()).into_any_element()
+    } else {
+        row.child(line().w(px(12.)))
+            .child(div().text_xs().text_color(rgb(DIM)).child(heading.clone()))
+            .child(line().flex_1())
+            .into_any_element()
     }
 }
 
@@ -228,15 +350,22 @@ impl Render for Trainer {
             return div()
                 .flex()
                 .flex_col()
-                .items_center()
-                .justify_center()
-                .gap_4()
                 .size_full()
                 .bg(rgb(BG))
                 .font_family("Segoe UI")
                 .text_sm()
-                .child(spinner(self.frame / 2))
-                .child(div().text_color(rgb(DIM)).child(self.status.clone()))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_4()
+                        .child(spinner(self.frame / 2))
+                        .child(div().text_color(rgb(DIM)).child(self.status.clone())),
+                )
+                .children(self.footer(cx))
                 .into_any_element();
         }
 
@@ -315,6 +444,9 @@ impl Render for Trainer {
                     .flex_col()
                     .gap(px(GAP))
                     .children(self.rows.iter().enumerate().map(|(i, row)| {
+                        if let Some(heading) = &row.separator {
+                            return separator(heading);
+                        }
                         let on = row.level > 0;
                         let has_levels = !row.levels.is_empty();
 
@@ -390,9 +522,11 @@ impl Render for Trainer {
                                     }),
                                 ))
                             })
+                            .into_any_element()
                     })),
             ),
             )
+            .children(self.footer(cx))
             .into_any_element()
     }
 }
@@ -462,7 +596,43 @@ fn apply_window_icon() {
     });
 }
 
+/// `--preview <config.js>`: that config's window without a game attached.
+fn preview_arg() -> Option<PathBuf> {
+    let mut args = std::env::args();
+    while let Some(a) = args.next() {
+        if a == "--preview" {
+            return args.next().map(PathBuf::from);
+        }
+    }
+    None
+}
+
+/// After an update, the new instance is started with `--wait-pid <old pid>`
+/// and holds off until the old one has exited and restored the game.
+fn wait_for_previous_instance() {
+    let mut args = std::env::args();
+    while let Some(a) = args.next() {
+        if a != "--wait-pid" {
+            continue;
+        }
+        let Some(pid) = args.next().and_then(|p| p.parse::<u32>().ok()) else { return };
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::{
+                OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+            };
+            if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+                WaitForSingleObject(h, 15_000);
+                let _ = CloseHandle(h);
+            }
+        }
+    }
+}
+
 fn main() {
+    wait_for_previous_instance();
+
     #[cfg(windows)]
     apply_window_icon();
 

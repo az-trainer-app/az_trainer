@@ -20,6 +20,8 @@ pub struct Shared {
     /// state phrase only; the game's name is rendered separately
     pub status: String,
     pub names: Vec<String>,
+    /// per option: `Some(heading)` when the entry is a divider, not an option
+    pub separators: Vec<Option<String>>,
     /// per option: label for its live value line, if it declares one
     pub shows: Vec<Option<String>>,
     /// per option: available multipliers; empty = plain on/off
@@ -36,6 +38,7 @@ pub struct Shared {
 pub struct Engine {
     pub shared: Arc<Mutex<Shared>>,
     quit: Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Engine {
@@ -46,8 +49,49 @@ impl Engine {
         }));
         let quit = Arc::new(AtomicBool::new(false));
         let (s, q) = (shared.clone(), quit.clone());
-        std::thread::spawn(move || run(s, q));
-        Engine { shared, quit }
+        let worker = Some(std::thread::spawn(move || run(s, q)));
+        Engine { shared, quit, worker }
+    }
+
+    /// A config's window with no game attached, showing its saved settings.
+    ///
+    /// For screenshots and for checking a script's options. Nothing ticks,
+    /// nothing touches a process, and clicks are not saved.
+    pub fn preview(path: PathBuf) -> Engine {
+        let shared = Arc::new(Mutex::new(Shared {
+            status: "loading preview...".into(),
+            ..Default::default()
+        }));
+        let quit = Arc::new(AtomicBool::new(false));
+        let (s, q) = (shared.clone(), quit.clone());
+        let worker = Some(std::thread::spawn(move || match Script::load(&path) {
+            Ok(script) => {
+                let saved = load_settings(&script.path);
+                let level = script
+                    .options
+                    .iter()
+                    .map(|o| saved.get(&o.name).copied().unwrap_or(0))
+                    .collect();
+                if let Ok(mut st) = s.lock() {
+                    publish(&mut st, &script, level);
+                }
+                nap(&q, Duration::MAX);
+            }
+            Err(e) => status(&s, format!("preview failed - {e}")),
+        }));
+        Engine { shared, quit, worker }
+    }
+
+    /// Stop the worker and wait until it has restored every patch.
+    ///
+    /// Waiting is the point: a restart that launches the new exe while the old
+    /// one's byte patches are still in the game leaves the new instance unable
+    /// to find its own signatures.
+    pub fn shutdown(&mut self) {
+        self.quit.store(true, Ordering::Relaxed);
+        if let Some(h) = self.worker.take() {
+            let _ = h.join();
+        }
     }
 
     /// Cycle an option: off -> level 1 -> ... -> off.
@@ -72,9 +116,33 @@ impl Engine {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        self.quit.store(true, Ordering::Relaxed);
-        std::thread::sleep(TICK * 2); // let the worker restore `poke`d values
+        self.shutdown();
     }
+}
+
+/// Sleep, but wake as soon as a shutdown is requested, so `shutdown()` never
+/// waits out a full retry delay.
+fn nap(quit: &AtomicBool, total: Duration) {
+    let mut left = total;
+    while !left.is_zero() && !quit.load(Ordering::Relaxed) {
+        let step = left.min(TICK);
+        std::thread::sleep(step);
+        left -= step;
+    }
+}
+
+/// Point the UI at a loaded script: its title, artwork and options.
+fn publish(s: &mut Shared, script: &Script, level: Vec<usize>) {
+    s.title = script.title.clone();
+    s.names = script.options.iter().map(|o| o.name.clone()).collect();
+    s.separators = script.options.iter().map(|o| o.separator.clone()).collect();
+    s.shows = script.options.iter().map(|o| o.show.clone()).collect();
+    s.levels = script.options.iter().map(|o| o.levels.clone()).collect();
+    s.labels = script.options.iter().map(|o| o.labels.clone()).collect();
+    s.level = level;
+    s.values = script.options.iter().map(|_| None).collect();
+    s.art = art::resolve(script);
+    s.ready = true;
 }
 
 /// Set the state phrase. Every caller is a state where nothing is hooked, so
@@ -94,6 +162,7 @@ fn forget_game(shared: &Arc<Mutex<Shared>>, msg: &str) {
         s.title.clear();
         s.art = None;
         s.names.clear();
+        s.separators.clear();
         s.shows.clear();
         s.levels.clear();
         s.labels.clear();
@@ -153,6 +222,9 @@ fn load_settings(config: &Path) -> HashMap<String, usize> {
 fn save_settings(config: &Path, names: &[String], levels: &[usize]) {
     let mut text = String::new();
     for (name, lvl) in names.iter().zip(levels) {
+        if name.is_empty() {
+            continue; // a separator, not a setting
+        }
         text.push_str(name);
         text.push('\t');
         text.push_str(&lvl.to_string());
@@ -173,7 +245,7 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
         let paths = Script::discover();
         if paths.is_empty() {
             status(&shared, "no configs\\games\\*.js found next to the exe");
-            std::thread::sleep(Duration::from_secs(3));
+            nap(&quit, Duration::from_secs(3));
             continue;
         }
 
@@ -203,13 +275,13 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                     format!("config error - {}", errors.join("; "))
                 },
             );
-            std::thread::sleep(Duration::from_millis(1500));
+            nap(&quit, Duration::from_millis(1500));
             continue;
         };
 
         let Some(proc) = Proc::open(pid) else {
             status(&shared, "cannot open process - run as Administrator");
-            std::thread::sleep(Duration::from_secs(2));
+            nap(&quit, Duration::from_secs(2));
             continue;
         };
         let Some((base, size)) = proc.module(&script.process) else {
@@ -220,15 +292,9 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
         status(&shared, "scanning...");
         script.attach(proc, base, size);
 
-        let art = art::resolve(&script);
         let saved = load_settings(&script.path);
         if let Ok(mut s) = shared.lock() {
-            s.title = script.title.clone();
-            s.names = script.options.iter().map(|o| o.name.clone()).collect();
-            s.shows = script.options.iter().map(|o| o.show.clone()).collect();
-            s.levels = script.options.iter().map(|o| o.levels.clone()).collect();
-            s.labels = script.options.iter().map(|o| o.labels.clone()).collect();
-            s.level = script
+            let level = script
                 .options
                 .iter()
                 // nothing is on unless it was on last time: a trainer that
@@ -241,9 +307,7 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                         .unwrap_or(0)
                 })
                 .collect();
-            s.values = script.options.iter().map(|_| None).collect();
-            s.art = art;
-            s.ready = true;
+            publish(&mut s, &script, level);
             s.status = format!("attached (pid {pid})");
             println!("[engine] attached {} pid {pid}, {} options, art={:?}",
                      script.title, s.names.len(), s.art);
@@ -335,5 +399,56 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
 fn turn_all_off(script: &Script) {
     for i in 0..script.options.len() {
         let _ = script.tick(i, false, 1.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_config(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("az_trainer_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("game.js")
+    }
+
+    #[test]
+    fn settings_round_trip_by_name() {
+        let config = temp_config("settings");
+        let names: Vec<String> = ["Infinite Health", "Speed", "Gold 99,999"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        save_settings(&config, &names, &[1, 3, 0]);
+
+        let back = load_settings(&config);
+        assert_eq!(back.get("Infinite Health"), Some(&1));
+        assert_eq!(back.get("Speed"), Some(&3));
+        assert_eq!(back.get("Gold 99,999"), Some(&0));
+        assert_eq!(settings_path(&config).file_name().unwrap(), "game.settings");
+        std::fs::remove_dir_all(config.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn unreadable_settings_start_everything_off() {
+        let config = temp_config("corrupt");
+        assert!(load_settings(&config).is_empty(), "no file yet");
+
+        std::fs::write(settings_path(&config), "garbage
+Speed	not-a-number
+Gold	2
+").unwrap();
+        let back = load_settings(&config);
+        assert_eq!(back.len(), 1, "only the well-formed line survives");
+        assert_eq!(back.get("Gold"), Some(&2));
+        std::fs::remove_dir_all(config.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn nap_wakes_immediately_on_shutdown() {
+        let quit = AtomicBool::new(true);
+        let started = std::time::Instant::now();
+        nap(&quit, Duration::from_secs(10));
+        assert!(started.elapsed() < Duration::from_millis(250));
     }
 }
