@@ -86,8 +86,6 @@ struct Trainer {
     updates: Arc<Mutex<update::State>>,
     /// version installed by the updater, waiting for a restart
     staged: Option<SharedString>,
-    /// what the last script sync changed
-    note: Option<SharedString>,
     /// loaded config's file, update date and checksum
     config_info: Option<SharedString>,
     /// the loaded config on GitHub, when the repository has it
@@ -137,7 +135,6 @@ impl Trainer {
             titled: String::new(),
             updates: Arc::new(Mutex::new(update::State::default())),
             staged: None,
-            note: None,
             config_info: None,
             config_url: None,
         };
@@ -150,7 +147,6 @@ impl Trainer {
         let rel = self.engine.shared.lock().ok().and_then(|s| s.config_rel.clone());
         if let Ok(u) = self.updates.lock() {
             self.staged = u.staged.clone().map(Into::into);
-            self.note = u.note.clone().map(Into::into);
             self.config_url = rel
                 .as_deref()
                 .and_then(|r| update::github_url(&u, r))
@@ -222,7 +218,7 @@ impl Trainer {
     }
 
     fn footer_lines(&self) -> usize {
-        self.staged.is_some() as usize + self.note.is_some() as usize
+        self.staged.is_some() as usize
     }
 
     fn status_bar_shown(&self) -> bool {
@@ -312,11 +308,6 @@ impl Trainer {
                                 ),
                         )
                 }))
-                .children(
-                    self.note
-                        .clone()
-                        .map(|n| line().child(div().text_color(rgb(DIM)).child(n))),
-                )
                 .into_any_element(),
         )
     }

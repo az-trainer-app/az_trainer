@@ -30,8 +30,6 @@ pub struct State {
     /// A newer exe has been downloaded, verified and swapped in; it runs on
     /// the next start.
     pub staged: Option<String>,
-    /// Summary of the last script sync, when it changed something.
-    pub note: Option<String>,
     /// Config paths (`games/dawnwalker.js`) present in the repository, as of
     /// the last tree listing. Empty until one succeeds.
     pub remote: std::collections::HashSet<String>,
@@ -209,6 +207,10 @@ fn sync_scripts(state: &Arc<Mutex<State>>, token: Option<&str>) -> Result<(), St
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
 
+    // The engine holds off loading scripts until this is dropped, so it never
+    // sees a game script whose libraries are still on their way.
+    let _busy = Syncing::begin();
+
     let (mut added, mut updated) = (0, 0);
     let mut edited: Vec<String> = Vec::new();
     for item in items {
@@ -272,13 +274,33 @@ fn sync_scripts(state: &Arc<Mutex<State>>, token: Option<&str>) -> Result<(), St
         parts.push(format!("{} kept (edited locally)", edited.len()));
     }
     if !parts.is_empty() {
-        let note = format!("Scripts: {}", parts.join(", "));
-        log(&note);
-        if let Ok(mut s) = state.lock() {
-            s.note = Some(note);
-        }
+        log(&format!("Scripts: {}", parts.join(", ")));
     }
     Ok(())
+}
+
+static SYNCING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True while scripts are being written. The engine waits rather than load a
+/// half-downloaded set.
+pub fn syncing() -> bool {
+    SYNCING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Marks a sync in progress until dropped - including on an early error.
+struct Syncing;
+
+impl Syncing {
+    fn begin() -> Syncing {
+        SYNCING.store(true, std::sync::atomic::Ordering::Relaxed);
+        Syncing
+    }
+}
+
+impl Drop for Syncing {
+    fn drop(&mut self) {
+        SYNCING.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// Only the shapes the trainer loads - `games/<name>.js`, its artwork, and

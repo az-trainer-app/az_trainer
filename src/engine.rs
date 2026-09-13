@@ -290,6 +290,11 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
         }
 
         // ---- find a config whose process is running -------------------
+        if crate::update::syncing() {
+            status(&shared, "downloading game scripts...");
+            nap(&quit, Duration::from_millis(500));
+            continue;
+        }
         let paths = Script::discover();
         if paths.is_empty() {
             status(&shared, "downloading game scripts...");
@@ -389,7 +394,8 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
             if since_check >= 10 {
                 since_check = 0;
                 let now = config_stamp(&script.path);
-                if now != stamp {
+                // mid-sync the files are a mix of old and new: wait it out
+                if now != stamp && !crate::update::syncing() {
                     println!("[reload] config changed, reloading");
                     { use std::io::Write; let _ = std::io::stdout().flush(); }
                     if let Ok(s) = shared.lock() {
