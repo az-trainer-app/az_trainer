@@ -210,18 +210,20 @@ impl Script {
     }
 }
 
-/// The `configs` folder in use: beside the exe when installed, otherwise the
-/// nearest ancestor that has one.
+/// The `configs` folder in use: the nearest one beside the exe or above it,
+/// else a new `configs` beside the exe for the updater to download into.
 ///
-/// The fallback is what lets a `target/release` build run straight from a
-/// checkout, reading the repo's own `configs/` - so edits are tracked by git
-/// and `cargo clean` cannot delete them.
+/// Searching upwards is what lets a `target/release` build run straight from
+/// a checkout, reading the repo's own `configs/` - so edits are tracked by git
+/// and `cargo clean` cannot delete them. A released exe ships alone and fills
+/// its own `configs` on first start.
 pub fn configs_dir() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     exe.ancestors()
         .skip(1)
         .map(|d| d.join("configs"))
         .find(|c| c.join("games").is_dir())
+        .or_else(|| Some(exe.parent()?.join("configs")))
 }
 
 /// Strip Windows' `\\?\` verbatim prefix and normalise separators.

@@ -30,6 +30,7 @@ jobs:
       - name: Build
         run: cargo build --release --bin az_trainer
 
+      # Just the exe and its checksum: the app downloads game scripts itself.
       - name: Package
         shell: pwsh
         run: |
@@ -37,14 +38,11 @@ jobs:
           Copy-Item target/release/az_trainer.exe dist/
           $hash = (Get-FileHash dist/az_trainer.exe -Algorithm SHA256).Hash.ToLower()
           Set-Content -Path dist/az_trainer.exe.sha256 -Value "$hash  az_trainer.exe" -Encoding ascii -NoNewline
-          Copy-Item -Recurse configs dist/configs
-          Get-ChildItem dist/configs -Recurse -Force -Include *.settings, .sync.json | Remove-Item
-          Compress-Archive -Path dist/az_trainer.exe, dist/configs -DestinationPath dist/az_trainer.zip
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create ${{ github.ref_name }}
-          dist/az_trainer.exe dist/az_trainer.exe.sha256 dist/az_trainer.zip
+          dist/az_trainer.exe dist/az_trainer.exe.sha256
           --title "AZ Trainer ${{ github.ref_name }}" --generate-notes

@@ -17,8 +17,8 @@ Single-player only. Do not use with online or competitive games.
 
 ## Usage
 
-1. Download `az_trainer.zip` from the [latest release](../../releases/latest) and extract it.
-2. Run `az_trainer.exe` and start the game.
+1. Download `az_trainer.exe` from the [latest release](../../releases/latest) and put it in a folder of its own.
+2. Run it and start the game. On first start it downloads the game scripts next to itself.
 3. Click the options you want.
 4. Close the trainer with **X** when done.
 

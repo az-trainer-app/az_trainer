@@ -292,7 +292,7 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
         // ---- find a config whose process is running -------------------
         let paths = Script::discover();
         if paths.is_empty() {
-            status(&shared, "no configs\\games\\*.js found next to the exe");
+            status(&shared, "downloading game scripts...");
             nap(&quit, Duration::from_secs(3));
             continue;
         }

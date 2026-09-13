@@ -19,6 +19,7 @@ const BRANCH: &str = "main";
 const EXE_ASSET: &str = "az_trainer.exe";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+const RETRY_WITHOUT_SCRIPTS: Duration = Duration::from_secs(60);
 /// Records the blob hash of every script this updater wrote, so a file whose
 /// hash no longer matches was edited by hand and is left alone.
 const RECORD: &str = ".sync.json";
@@ -49,13 +50,22 @@ pub fn start(state: Arc<Mutex<State>>) {
         remove_previous_exe();
         loop {
             let token = token();
-            if let Err(e) = update_app(&state, token.as_deref()) {
-                log(&format!("app update: {e}"));
-            }
+            // Scripts first: a fresh install has none and cannot do anything
+            // until they arrive.
             if let Err(e) = sync_scripts(&state, token.as_deref()) {
                 log(&format!("script sync: {e}"));
             }
-            std::thread::sleep(CHECK_EVERY);
+            if let Err(e) = update_app(&state, token.as_deref()) {
+                log(&format!("app update: {e}"));
+            }
+            // Without any game scripts yet (offline on first start), try
+            // again soon instead of leaving the trainer empty for hours.
+            let wait = if crate::js::Script::discover().is_empty() {
+                RETRY_WITHOUT_SCRIPTS
+            } else {
+                CHECK_EVERY
+            };
+            std::thread::sleep(wait);
         }
     });
 }

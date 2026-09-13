@@ -124,3 +124,7 @@ git push origin v1.1.0
 ```
 
 The tag must match `Cargo.toml`.
+
+A release is just `az_trainer.exe` and its `.sha256`. Game scripts and libraries are not bundled:
+the app downloads them from `main` into `configs\` beside the exe on first start and keeps them
+in sync, so script changes need no release.
