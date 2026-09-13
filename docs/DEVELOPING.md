@@ -106,7 +106,7 @@ npm run format:check
 cargo test --release
 ```
 
-Golden hook bytes, config contracts (nothing found / everything on then off), library and app tests.
+Golden hook bytes, library tests, and app tests (including loading every config in QuickJS).
 All run on every pull request.
 
 ## Updates

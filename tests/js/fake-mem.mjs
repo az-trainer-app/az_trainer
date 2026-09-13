@@ -9,17 +9,10 @@
 export const BASE = 0x140000000;
 export const SIZE = 0x4000000;
 
-/** Where plausible heap pointers point. Well below 2^53, so offsets stay exact. */
-export const HEAP = 0x20000000000;
-
 /**
  * @param {object} [opts]
  * @param {(sig: string) => number} [opts.aob] address for a signature; default: not found
  * @param {(sig: string) => number[]} [opts.aobAll]
- * @param {boolean} [opts.plausible] unwritten memory reads as heap pointers and
- *   positive floats, so pointer walks and "value > 0" checks succeed. Without
- *   it, a pointer read from the byte pattern is so large that the next read
- *   loses precision and comes back 0 - every walk dies after one step.
  */
 export function createMem(opts = {}) {
     /** @type {Map<number, number>} */
@@ -39,20 +32,16 @@ export function createMem(opts = {}) {
     const read = (a, n) => Array.from({ length: n }, (_, i) => readByte(a + i));
     const view = (arr) => new DataView(Uint8Array.from(arr).buffer);
     const store = (a, data) => data.forEach((b, i) => bytes.set(a + i, b & 0xff));
-    const unwritten = (a, n) =>
-        Array.from({ length: n }, (_, i) => a + i).every((x) => !bytes.has(x));
 
     const mem = {
         u64(a) {
-            if (opts.plausible && unwritten(a, 8)) return HEAP + ((a * 8) % 0x10000000);
             const b = read(a, 8);
             let v = 0;
             for (let i = 7; i >= 0; i--) v = v * 256 + b[i];
             return v;
         },
         i32: (a) => view(read(a, 4)).getInt32(0, true),
-        f32: (a) =>
-            opts.plausible && unwritten(a, 4) ? 100 : view(read(a, 4)).getFloat32(0, true),
+        f32: (a) => view(read(a, 4)).getFloat32(0, true),
         writeF32(a, v) {
             const b = new Uint8Array(4);
             new DataView(b.buffer).setFloat32(0, v, true);
