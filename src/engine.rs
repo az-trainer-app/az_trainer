@@ -75,12 +75,9 @@ impl Engine {
         let (s, q) = (shared.clone(), quit.clone());
         let worker = Some(std::thread::spawn(move || match Script::load(&path) {
             Ok(script) => {
-                let saved = load_settings(&script.path);
-                let level = script
-                    .options
-                    .iter()
-                    .map(|o| saved.get(&o.name).copied().unwrap_or(0))
-                    .collect();
+                // defaults: everything off, so previews and screenshots show a
+                // clean window regardless of the developer's saved settings
+                let level = vec![0; script.options.len()];
                 if let Ok(mut st) = s.lock() {
                     publish(&mut st, &script, level);
                 }

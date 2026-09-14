@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "az_trainer"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "embed-resource",
  "gpui",

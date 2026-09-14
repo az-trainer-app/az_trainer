@@ -2,9 +2,9 @@
 
 A small, fast game trainer for Windows. Start it, start your game, click what you want.
 
-| The Blood of Dawnwalker | Dragon Age: The Veilguard |
-| :---: | :---: |
-| ![AZ Trainer attached to The Blood of Dawnwalker](docs/dawnwalker.png) | ![AZ Trainer attached to Dragon Age: The Veilguard](docs/veilguard.png) |
+| The Blood of Dawnwalker | Dragon Age: The Veilguard | Onimusha: Way of the Sword |
+| :---: | :---: | :---: |
+| ![AZ Trainer attached to The Blood of Dawnwalker](docs/dawnwalker.png) | ![AZ Trainer attached to Dragon Age: The Veilguard](docs/veilguard.png) | ![AZ Trainer attached to Onimusha: Way of the Sword](docs/onimusha.png) |
 
 ## Features
 
