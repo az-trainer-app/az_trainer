@@ -87,6 +87,19 @@ pub fn find_pid(name: &str) -> Option<u32> {
     }
 }
 
+/// Candidates from a float scan in one region: the offsets still in the
+/// running, and the value each had when last read.
+///
+/// Indices plus values rather than a flat list of addresses: a first scan can
+/// keep tens of millions of candidates, and at that size the representation is
+/// the difference between fitting in memory and not.
+pub struct FloatScan {
+    pub base: u64,
+    pub size: usize,
+    pub idx: Vec<u32>,
+    pub val: Vec<f32>,
+}
+
 pub struct Proc {
     pub handle: HANDLE,
     pub pid: u32,
@@ -488,6 +501,106 @@ impl Proc {
             }
         }
         out
+    }
+
+    /// Committed, writable, private regions small enough to read in one go -
+    /// where a game keeps the values it is changing.
+    fn writable_private_regions(&self) -> Vec<(u64, usize)> {
+        let mut out = Vec::new();
+        let mut addr: u64 = 0;
+        while addr < (1u64 << 47) {
+            let mut mbi = MEMORY_BASIC_INFORMATION::default();
+            let n = unsafe {
+                VirtualQueryEx(
+                    self.handle,
+                    Some(addr as *const c_void),
+                    &mut mbi,
+                    std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            if n == 0 {
+                break;
+            }
+            let rbase = mbi.BaseAddress as u64;
+            let rsize = mbi.RegionSize;
+            let prot = mbi.Protect;
+            let writable = (prot.0 & 0x04) != 0 || (prot.0 & 0x40) != 0;
+            if mbi.State == MEM_COMMIT
+                && mbi.Type.0 == 0x20000 // MEM_PRIVATE
+                && writable
+                && (prot & PAGE_GUARD).0 == 0
+                && rsize >= 0x1000
+                && rsize <= 256 * 1024 * 1024
+            {
+                out.push((rbase, rsize));
+            }
+            if rsize == 0 {
+                break;
+            }
+            addr = rbase.wrapping_add(rsize as u64);
+        }
+        out
+    }
+
+    /// A first scan: every float in writable private memory within
+    /// `[lo, hi]`, up to `limit` candidates.
+    pub fn snapshot_f32(&self, lo: f32, hi: f32, limit: usize) -> Vec<FloatScan> {
+        let mut out = Vec::new();
+        let mut total = 0usize;
+        let mut buf = Vec::new();
+        for (base, size) in self.writable_private_regions() {
+            if total >= limit {
+                break;
+            }
+            buf.resize(size, 0);
+            if !self.read(base, &mut buf[..size]) {
+                continue;
+            }
+            let mut idx = Vec::new();
+            let mut val = Vec::new();
+            for i in 0..size / 4 {
+                let o = i * 4;
+                let v = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                if v >= lo && v <= hi {
+                    idx.push(i as u32);
+                    val.push(v);
+                }
+            }
+            if !idx.is_empty() {
+                total += idx.len();
+                out.push(FloatScan { base, size, idx, val });
+            }
+        }
+        out
+    }
+
+    /// A next scan: re-read every candidate, keep those for which
+    /// `keep(before, now)` holds, and remember `now` for the pass after.
+    /// Regions that can no longer be read are dropped. Returns the survivors.
+    pub fn refine_f32(&self, scan: &mut Vec<FloatScan>, keep: impl Fn(f32, f32) -> bool) -> usize {
+        let mut buf = Vec::new();
+        let mut total = 0usize;
+        scan.retain_mut(|s| {
+            buf.resize(s.size, 0);
+            if !self.read(s.base, &mut buf[..s.size]) {
+                return false;
+            }
+            let mut idx = Vec::new();
+            let mut val = Vec::new();
+            for (k, &i) in s.idx.iter().enumerate() {
+                let o = i as usize * 4;
+                let now = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                if keep(s.val[k], now) {
+                    idx.push(i);
+                    val.push(now);
+                }
+            }
+            s.idx = idx;
+            s.val = val;
+            total += s.idx.len();
+            !s.idx.is_empty()
+        });
+        total
     }
 
     pub fn read_bytes(&self, addr: u64, n: usize) -> Option<Vec<u8>> {

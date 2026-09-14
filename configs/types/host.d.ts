@@ -58,6 +58,23 @@ interface Mem {
      * site found by signature alone.
      */
     region(addr: Address): number[];
+
+    // ---- unknown-value search (research) ---------------------------------
+
+    /**
+     * Start a float search: keep every float within `[lo, hi]` in writable
+     * memory. Returns the candidate count.
+     */
+    scanStart(lo: number, hi: number): number;
+    /**
+     * Narrow the search. Re-reads every candidate and keeps those that
+     * `"decreased"`, `"increased"`, stayed `"unchanged"`, `"changed"`, or are
+     * `"equal"` to `value` since the last pass. Returns the survivors, or -1
+     * for an unknown mode. Change the value in the game between calls.
+     */
+    scanNext(mode: 'decreased' | 'increased' | 'unchanged' | 'changed' | 'equal', value?: number): number;
+    /** Up to `n` survivors as a flat `[addr, value, addr, value, ...]`. */
+    scanResults(n: number): number[];
     /** Load address of the game's main module. */
     moduleBase(): Address;
     /** Size of the main module in bytes. */

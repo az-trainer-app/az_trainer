@@ -305,6 +305,14 @@ impl Loader for FsLoader {
     }
 }
 
+/// A float scan being narrowed across several calls - a first scan, then next
+/// scans as the value is made to change in the game. Held here because each
+/// step is a separate trip through the devtools channel.
+static FLOAT_SCAN: std::sync::Mutex<Vec<crate::mem::FloatScan>> = std::sync::Mutex::new(Vec::new());
+
+/// How many candidates a first scan may keep: 8 bytes each, so ~320 MB.
+const FLOAT_SCAN_LIMIT: usize = 40_000_000;
+
 /// Install `mem.*` and `log()`.
 fn register_host(ctx: &Context) -> Result<(), String> {
     ctx.with(|ctx| {
@@ -392,6 +400,77 @@ fn register_host(ctx: &Context) -> Result<(), String> {
                     },
                     Vec::new(),
                 )
+            })
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Unknown-value search. scanStart(lo, hi) keeps every float in range;
+        // each scanNext(mode[, value]) re-reads the survivors and keeps those
+        // that match - "decreased", "increased", "unchanged", "changed", or
+        // "equal" to value. Returns how many are left (-1 for an unknown mode).
+        mem.set(
+            "scanStart",
+            Function::new(ctx.clone(), |lo: f64, hi: f64| -> f64 {
+                with_target(
+                    |t| {
+                        let scan = t.proc.snapshot_f32(lo as f32, hi as f32, FLOAT_SCAN_LIMIT);
+                        let n: usize = scan.iter().map(|s| s.idx.len()).sum();
+                        if let Ok(mut g) = FLOAT_SCAN.lock() {
+                            *g = scan;
+                        }
+                        n as f64
+                    },
+                    0.0,
+                )
+            })
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        mem.set(
+            "scanNext",
+            Function::new(
+                ctx.clone(),
+                |mode: String, value: rquickjs::function::Opt<f64>| -> f64 {
+                    let v = value.0.unwrap_or(0.0) as f32;
+                    let keep: fn(f32, f32, f32) -> bool = match mode.as_str() {
+                        "decreased" => |b, n, _| n < b,
+                        "increased" => |b, n, _| n > b,
+                        "unchanged" => |b, n, _| n == b,
+                        "changed" => |b, n, _| n != b,
+                        "equal" => |_, n, v| (n - v).abs() < 0.01,
+                        _ => return -1.0,
+                    };
+                    with_target(
+                        |t| match FLOAT_SCAN.lock() {
+                            Ok(mut g) => t.proc.refine_f32(&mut g, |b, n| keep(b, n, v)) as f64,
+                            Err(_) => 0.0,
+                        },
+                        0.0,
+                    )
+                },
+            )
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        mem.set(
+            "scanResults",
+            Function::new(ctx.clone(), |n: f64| -> Vec<f64> {
+                let mut out = Vec::new();
+                if let Ok(g) = FLOAT_SCAN.lock() {
+                    'regions: for s in g.iter() {
+                        for (k, &i) in s.idx.iter().enumerate() {
+                            if out.len() / 2 >= n as usize {
+                                break 'regions;
+                            }
+                            out.push((s.base + i as u64 * 4) as f64);
+                            out.push(s.val[k] as f64);
+                        }
+                    }
+                }
+                out
             })
             .map_err(|e| e.to_string())?,
         )
