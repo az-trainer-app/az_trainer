@@ -113,18 +113,22 @@ const CD_SIG = '83 ?? 00 E8 ?? ?? ?? ?? F3 0F 10 4D ?? F3 0F 5C C1';
 const CD_HOOK_OFF = 8; // past the cmp and the call, onto the movss
 const CD_STEAL = 9; // movss(5) + subss(4)
 const CD_SITES = 12;
-const GUARD_SLOT = 0x80; // the player's actor, rewritten every tick
+const GUARD_SLOT = 0x80; // the player's spell-bar component (rsi), once the script has vouched for it
 const F_FLOOR_SLOT = 0x88; // 2.0  - below this there is nothing worth cutting
 const F_LEFT_SLOT = 0x8c; // 0.1  - what a shortened cooldown becomes
+const SEEN_SLOT = 0x90; // the last component (rsi) seen with a cooldown worth cutting
 
 /**
  * Cut the player's cooldown short.
  *
- * Mirrors what the game's own trainer does at this instruction: leave short
- * timers alone, and only touch the one belonging to the actor at [rsi+0x10].
- * While the guard is zero nothing matches, so the hook does nothing until the
- * player is known - and on a site that turns out not to be the player's spell
- * bar it simply never fires.
+ * Like the game's own trainer, short timers are left alone and only the
+ * player's are touched - the component in rsi whose actor, at [rsi+0x10], is
+ * the player. But the cave never reads [rsi+0x10] itself: on the sites that
+ * are not the spell bar rsi is not a pointer at all, and reading through it
+ * crashed the game as soon as enemies used their skills. The cave only parks
+ * rsi and compares it; the script checks the parked value from outside the
+ * game, where a bad pointer just reads as 0, and approves it into the guard.
+ * While the guard is zero nothing matches.
  *
  * @param {number} target
  */
@@ -134,23 +138,38 @@ function cooldownHook(target) {
         CD_STEAL,
         (at, original) =>
             mem.writeBytes(at + GUARD_SLOT, HOOK.u64(0)) &&
+            mem.writeBytes(at + SEEN_SLOT, HOOK.u64(0)) &&
             mem.writeF32(at + F_FLOOR_SLOT, 2.0) &&
             mem.writeF32(at + F_LEFT_SLOT, 0.1) &&
             mem.writeBytes(at, [
                 ...original, //                                    @0,  ends 9
                 0x0f, 0x2f, 0x05, ...HOOK.i32(F_FLOOR_SLOT - 16), // comiss xmm0,[floor] @9, ends 16
-                0x76, 0x17, //                                     jbe done
-                0x50, //                                           push rax
-                0x48, 0x8b, 0x46, ACTOR_OFF, //                    mov rax,[rsi+0x10]  @19, ends 23
-                0x48, 0x3b, 0x05, ...HOOK.i32(GUARD_SLOT - 30), // cmp rax,[rip+guard] @23, ends 30
-                0x58, //                                           pop rax (keeps flags)
-                0x75, 0x08, //                                     jne done
-                0xf3, 0x0f, 0x10, 0x05, ...HOOK.i32(F_LEFT_SLOT - 41), // movss xmm0,[left] @33, ends 41
-                // done:
+                0x76, 0x18, //                                     jbe done            @16, ends 18
+                0x48, 0x89, 0x35, ...HOOK.i32(SEEN_SLOT - 25), //  mov [rip+seen],rsi  @18, ends 25
+                0x48, 0x3b, 0x35, ...HOOK.i32(GUARD_SLOT - 32), // cmp rsi,[rip+guard] @25, ends 32
+                0x75, 0x08, //                                     jne done            @32, ends 34
+                0xf3, 0x0f, 0x10, 0x05, ...HOOK.i32(F_LEFT_SLOT - 42), // movss xmm0,[left] @34, ends 42
+                // done:                                                               @42
                 ...HOOK.jmpAbs(target + original.length),
             ]),
         { free: false },
     );
+}
+
+/**
+ * The component a cooldown cave should act on: what it last saw, if that
+ * belongs to the player; else what it already had, while that still does.
+ * Reads go through the host, so a parked value that is not a pointer is
+ * simply not the player's.
+ *
+ * @param {number} cave
+ * @param {number} who the player's actor, or 0
+ */
+function vouch(cave, who) {
+    const owns = (component) => component !== 0 && who !== 0 && mem.u64(component + ACTOR_OFF) === who;
+    const seen = mem.u64(cave + SEEN_SLOT);
+    const approved = mem.u64(cave + GUARD_SLOT);
+    return owns(seen) ? seen : owns(approved) ? approved : 0;
 }
 
 /** @type {ReturnType<typeof cooldownHook>[]} */
@@ -531,9 +550,13 @@ export const options = [
             const a = on && attributes();
             if (a) mem.writeF32(slot(a, ENERGY_INCREASE_SPEED), ENERGY_FLOOD);
             if (!applied) return;
-            // the guard moves with the player, so it is rewritten every tick
+            // the player's component can change (a reload, a new area), so it
+            // is vouched for again every tick
             const who = actor();
-            for (const h of cooldownHooks) mem.writeBytes(h.cave + GUARD_SLOT, HOOK.u64(who));
+            for (const h of cooldownHooks) {
+                const next = vouch(h.cave, who);
+                if (next !== mem.u64(h.cave + GUARD_SLOT)) mem.writeBytes(h.cave + GUARD_SLOT, HOOK.u64(next));
+            }
         },
     },
     {

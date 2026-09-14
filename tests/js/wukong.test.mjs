@@ -32,6 +32,7 @@ const ATTRS = 0x20;
 const SET_SLOT = 0x100;
 const ACTOR_SLOT = 0x108;
 const GUARD_SLOT = 0x80;
+const SEEN_SLOT = 0x90;
 const SET_CHAIN = [0x30, 0x38];
 
 const HP_MAX = 1;
@@ -211,8 +212,32 @@ test('No Cooldowns hooks the spell sites and frees the transform gauge', async (
 
     assert.equal(fake.allocs.length, 1 + sites.length, 'recorder plus one cave per site');
     for (let n = 1; n <= sites.length; n++) {
-        assert.equal(fake.mem.u64(caveOf(fake, n) + GUARD_SLOT), ACTOR, 'guarded by the player');
+        const code = fake.read(caveOf(fake, n), 42);
+        const derefsRsi = code.some((b, i) => b === 0x8b && (code[i + 1] & 0xc7) === 0x46);
+        assert.ok(!derefsRsi, 'the cave never reads through rsi - it is not a pointer on every site');
+        assert.equal(fake.mem.u64(caveOf(fake, n) + GUARD_SLOT), 0, 'nothing approved before a cooldown is seen');
     }
+
+    // the player's spell bar parks its component; an enemy's site parks one
+    // belonging to someone else, and another parks a value that is no pointer
+    const PLAYER_BAR = HEAP + 0x600000;
+    const ENEMY_BAR = HEAP + 0x700000;
+    fake.poke(PLAYER_BAR + 0x10, le64(ACTOR));
+    fake.poke(ENEMY_BAR + 0x10, le64(HEAP + 0x800000));
+    fake.poke(caveOf(fake, 1) + SEEN_SLOT, le64(PLAYER_BAR));
+    fake.poke(caveOf(fake, 2) + SEEN_SLOT, le64(ENEMY_BAR));
+    cd.tick({ on: true, mult: 1 });
+    assert.equal(fake.mem.u64(caveOf(fake, 1) + GUARD_SLOT), PLAYER_BAR, "the player's bar is approved");
+    assert.equal(fake.mem.u64(caveOf(fake, 2) + GUARD_SLOT), 0, "an enemy's bar is not");
+
+    // a stray value seen later does not unseat the approved bar...
+    fake.poke(caveOf(fake, 1) + SEEN_SLOT, le64(0x40000000));
+    cd.tick({ on: true, mult: 1 });
+    assert.equal(fake.mem.u64(caveOf(fake, 1) + GUARD_SLOT), PLAYER_BAR, 'approval kept');
+    // ...but a bar that stops belonging to the player is dropped
+    fake.poke(PLAYER_BAR + 0x10, le64(HEAP + 0x900000));
+    cd.tick({ on: true, mult: 1 });
+    assert.equal(fake.mem.u64(caveOf(fake, 1) + GUARD_SLOT), 0, 'approval dropped');
     // transformation is not a countdown at all, just a refill rate
     assert.equal(fake.mem.f32(slot(ATTRS_OBJ, ENERGY_INCREASE_SPEED)), 10000, 'transform gauge');
 
