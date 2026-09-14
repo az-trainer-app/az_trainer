@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use engine::Engine;
 use gpui::{
-    div, img, prelude::*, px, rgb, size, App,
+    div, img, prelude::*, px, rgb, rgba, size, App,
     Application, Bounds, Context, FontWeight, MouseButton, ObjectFit, SharedString,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
@@ -352,6 +352,23 @@ impl Trainer {
     }
 }
 
+/// The game name over the banner: white with a subtle black drop shadow, drawn
+/// as a black copy offset by one pixel behind the white text.
+fn title_label(title: SharedString) -> impl IntoElement {
+    let text = || div().text_xl().font_weight(FontWeight::SEMIBOLD);
+    div()
+        .relative()
+        .child(
+            text()
+                .absolute()
+                .left(px(1.))
+                .top(px(1.))
+                .text_color(rgba(0x000000c0))
+                .child(title.clone()),
+        )
+        .child(text().text_color(rgb(0xffffff)).child(title))
+}
+
 /// A divider between groups of options: `── Heading ──────`, or a plain line
 /// when the heading is empty.
 fn separator(heading: &SharedString) -> gpui::AnyElement {
@@ -449,9 +466,9 @@ impl Render for Trainer {
             .text_color(rgb(TEXT))
             .font_family("Segoe UI")
             .text_sm()
-            // Full-bleed art stripe. The artwork already carries the game's
-            // name, so the text is a fallback for configs shipped without an
-            // image rather than a label drawn on top of one.
+            // Full-bleed art stripe with the game's name drawn over it (the
+            // hero art carries no text). White with a subtle black drop shadow,
+            // sitting on the banner's faded-dark bottom for contrast.
             .child(
                 div()
                     .relative()
@@ -460,27 +477,16 @@ impl Render for Trainer {
                     .h(px(BANNER_H))
                     .bg(rgb(PANEL))
                     .overflow_hidden()
-                    .map(|d| match self.art.clone() {
-                        Some(p) => d.child(
-                            img(p)
-                                .absolute()
-                                .inset_0()
-                                .size_full()
-                                .object_fit(ObjectFit::Cover),
-                        ),
-                        None => d
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(PAD))
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .text_color(rgb(0xffffff))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(self.title.clone()),
-                            ),
-                    }),
+                    .when_some(self.art.clone(), |d, p| {
+                        d.child(img(p).absolute().inset_0().size_full().object_fit(ObjectFit::Cover))
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(PAD))
+                            .bottom(px(8.))
+                            .child(title_label(self.title.clone())),
+                    ),
             )
             .child(
                 div()

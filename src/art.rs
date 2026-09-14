@@ -27,18 +27,21 @@ pub fn resolve(script: &Script) -> Option<PathBuf> {
 /// Fit artwork to the banner's aspect ratio.
 ///
 /// Steam's widest art (the 1920x620 hero) is still narrower than the banner,
-/// so any real source would be cropped top and bottom by an object-fit cover.
-/// Instead, a narrower image is centred on a banner-ratio canvas with its side
-/// edge columns stretched out and lightly blurred - nothing is cropped
-/// vertically, and the blur keeps the fill from reading as hard streaks. An
-/// image already at least as wide as the banner is left alone (cover then crops
-/// width, keeping full height). Results are cached in the temp dir by content.
+/// so an object-fit cover would crop it top and bottom. Instead the image is
+/// left-aligned on a banner-ratio canvas and its right edge column is stretched
+/// out and lightly blurred to fill the remainder - nothing is cropped
+/// vertically, and there is no fill on the left. The bottom is then faded to
+/// the window colour so the banner melts into the content below rather than
+/// ending on a hard line. Results are cached in the temp dir by content.
 fn fit_banner(src: &Path) -> Option<PathBuf> {
+    // window background (main.rs BG), the colour the banner fades into
+    const BG: [u8; 3] = [0x11, 0x13, 0x1a];
+
     let meta = std::fs::metadata(src).ok()?;
     let img = image::open(src).ok()?.to_rgb8();
     let (w, h) = img.dimensions();
-    if w == 0 || h == 0 || w as f32 / h as f32 >= BANNER_RATIO - 0.02 {
-        return None; // already wide enough: use the original
+    if w == 0 || h == 0 {
+        return None;
     }
 
     let mtime = meta
@@ -47,7 +50,9 @@ fn fit_banner(src: &Path) -> Option<PathBuf> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let key = format!("{}|{mtime}|{w}x{h}", src.to_string_lossy());
+    // `v2` marks the left-aligned + bottom-fade composition, so stale cached
+    // banners from the old centred version are not reused.
+    let key = format!("v2|{}|{mtime}|{w}x{h}", src.to_string_lossy());
     let digest = sha2::Sha256::digest(key.as_bytes());
     let hash: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
     let out = std::env::temp_dir().join(format!("az_trainer_banner_{hash}.jpg"));
@@ -56,34 +61,40 @@ fn fit_banner(src: &Path) -> Option<PathBuf> {
     }
 
     let cw = (h as f32 * BANNER_RATIO).round() as u32;
-    let pad_l = (cw - w) / 2;
-    let mut canvas = RgbImage::new(cw, h);
+    let mut canvas = RgbImage::new(cw.max(w), h);
 
-    // stretch each side's edge column across its padding
-    for y in 0..h {
-        let left = *img.get_pixel(0, y);
-        let right = *img.get_pixel(w - 1, y);
-        for x in 0..pad_l {
-            canvas.put_pixel(x, y, left);
+    if w >= cw {
+        // wide enough: no fill needed, the cover crops width
+        imageops::replace(&mut canvas, &img, 0, 0);
+    } else {
+        // left-aligned: image at x=0, right edge stretched across the remainder
+        for y in 0..h {
+            let right = *img.get_pixel(w - 1, y);
+            for x in w..cw {
+                canvas.put_pixel(x, y, right);
+            }
         }
-        for x in (pad_l + w)..cw {
-            canvas.put_pixel(x, y, right);
+        let rpad = cw - w;
+        if rpad > 1 {
+            let sigma = (h as f32 / 60.0).max(4.0);
+            let blurred = imageops::blur(&imageops::crop_imm(&canvas, w, 0, rpad, h).to_image(), sigma);
+            imageops::replace(&mut canvas, &blurred, w as i64, 0);
+        }
+        imageops::replace(&mut canvas, &img, 0, 0);
+    }
+
+    // fade the bottom third into the window colour
+    let (cw2, ch2) = canvas.dimensions();
+    let fade = (ch2 as f32 * 0.34).round() as u32;
+    for y in (ch2 - fade)..ch2 {
+        let t = (y - (ch2 - fade)) as f32 / fade as f32; // 0 at top of fade, 1 at bottom
+        for x in 0..cw2 {
+            let p = canvas.get_pixel_mut(x, y);
+            for c in 0..3 {
+                p[c] = (p[c] as f32 * (1.0 - t) + BG[c] as f32 * t).round() as u8;
+            }
         }
     }
-    // soften the stretched pads
-    let sigma = (h as f32 / 60.0).max(4.0);
-    if pad_l > 1 {
-        let blurred = imageops::blur(&imageops::crop_imm(&canvas, 0, 0, pad_l, h).to_image(), sigma);
-        imageops::replace(&mut canvas, &blurred, 0, 0);
-    }
-    let rpad = cw - pad_l - w;
-    if rpad > 1 {
-        let x = (pad_l + w) as i64;
-        let blurred = imageops::blur(&imageops::crop_imm(&canvas, pad_l + w, 0, rpad, h).to_image(), sigma);
-        imageops::replace(&mut canvas, &blurred, x, 0);
-    }
-    // the crisp source on top, centred
-    imageops::replace(&mut canvas, &img, pad_l as i64, 0);
 
     canvas.save(&out).ok().map(|_| out)
 }
