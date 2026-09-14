@@ -197,6 +197,27 @@ test('switching everything off takes the recorder back out', async () => {
     assert.deepEqual(fake.read(SITE, 8), original, 'site restored when the last option goes off');
 });
 
+test('the attributes are also found down the deeper chain a later layout uses', async () => {
+    const fake = game();
+    const cfg = await load();
+    const health = byName(cfg.options, 'Infinite Health');
+
+    health.tick({ on: true, mult: 1 });
+    const cave = caveOf(fake, 0);
+    attributesAt(fake, ATTRS_OBJ);
+    const OUTER = HEAP + 0xa00000;
+    const INNER = HEAP + 0xb00000;
+    fake.poke(cave + SET_SLOT, le64(SET));
+    fake.poke(cave + ACTOR_SLOT, le64(ACTOR));
+    fake.poke(SET + 0x30, le64(0)); // the old chain leads nowhere
+    fake.poke(SET + 0x20, le64(OUTER));
+    fake.poke(OUTER + 0x30, le64(INNER));
+    fake.poke(INNER + 0x10, le64(ATTRS_OBJ));
+    health.tick({ on: true, mult: 1 });
+
+    assert.equal(fake.mem.f32(slot(ATTRS_OBJ, HP)), 999999, 'health flooded');
+});
+
 test('No Cooldowns hooks the spell sites and frees the transform gauge', async () => {
     const sites = [CD_SITE, CD_SITE + 0x400];
     const fake = createMem({ aob: () => SITE, aobAll: () => sites });

@@ -348,14 +348,22 @@ function isAttributes(p) {
     return attr(p, HP) >= 0 && attr(p, STAMINA) >= 0 && attr(p, MP) >= 0;
 }
 
-// From the recorded object to the attribute array. Confirmed against the
-// live game: the second link is the only pointer to that array anywhere in
-// the process. Searched for again if a build moves it.
-const SET_CHAIN = [0x30, 0x38];
+// From the recorded object to the attribute array, as seen in the live game.
+// The layout has moved before - [0x30, 0x38] stopped leading anywhere and the
+// array turned up at [0x20, 0x30, 0x10] - so every known chain is tried
+// before anything is searched for.
+const SET_CHAINS = [
+    [0x30, 0x38],
+    [0x20, 0x30, 0x10],
+];
 
-// How far into an object to look when the known chain stops working.
+// How far into an object to look when no known chain works. Two levels are
+// searched wide; a third only through the first pointers of each, which is
+// where the chains so far have run, to keep the read count sane.
 const ACTOR_SPAN = 0x400;
 const CHILD_SPAN = 0x400;
+const DEEP_SPAN = 0x80;
+const DEEP_CHILD_SPAN = 0x100;
 
 /**
  * Find the attribute object under `root`, returning the offsets that reach it.
@@ -381,6 +389,18 @@ function searchAttributes(root) {
         for (let inner = 0; inner < CHILD_SPAN; inner += 8) {
             const p = mem.u64(child + inner);
             if (p && isAttributes(p)) return [off, inner];
+        }
+    }
+    for (let off = 0; off < DEEP_SPAN; off += 8) {
+        const child = mem.u64(root + off);
+        if (!child) continue;
+        for (let mid = 0; mid < DEEP_CHILD_SPAN; mid += 8) {
+            const grandchild = mem.u64(child + mid);
+            if (!grandchild) continue;
+            for (let inner = 0; inner < DEEP_CHILD_SPAN; inner += 8) {
+                const p = mem.u64(grandchild + inner);
+                if (p && isAttributes(p)) return [off, mid, inner];
+            }
         }
     }
     return null;
@@ -417,12 +437,13 @@ function attributes() {
     globalThis.__wk = { cave: recorder ? recorder.cave : 0, set, actor: actor() };
     if (!set) return 0;
 
-    // The usual case: the recorded object leads straight to the array.
-    const direct = follow(set, SET_CHAIN);
-    if (isAttributes(direct)) {
+    // The usual case: a known chain leads straight to the array.
+    for (const chain of SET_CHAINS) {
+        const direct = follow(set, chain);
+        if (!isAttributes(direct)) continue;
         if (!reported) {
             reported = true;
-            log(`attributes: ${direct.toString(16)} via the recorded call`);
+            log(`attributes: ${direct.toString(16)} via the recorded call, chain ${chain.map((o) => '0x' + o.toString(16)).join(' -> ')}`);
         }
         return direct;
     }
