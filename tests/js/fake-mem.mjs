@@ -112,9 +112,10 @@ export function createMem(opts = {}) {
  * @param {ReturnType<typeof createMem>} fake
  * @returns {string[]} the lines scripts logged
  */
-export function install(fake) {
+export function install(fake, game = { exe: 'Game.exe', timestamp: 0, size: SIZE, steamBuild: undefined, build: null }) {
     const lines = [];
     globalThis.mem = fake.mem;
+    globalThis.game = game;
     globalThis.log = (msg) => lines.push(msg);
     return lines;
 }

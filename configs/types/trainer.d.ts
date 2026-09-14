@@ -74,8 +74,11 @@ export type Entry = Option | Separator;
  * .png / .jpeg / .webp) when present.
  */
 export interface Config {
-    /** Executable name to attach to, e.g. `'Game.exe'`. */
-    process: string;
+    /**
+     * Executable name to attach to, e.g. `'Game.exe'` - or several, for builds
+     * that ship under different names (Steam, Game Pass, ...).
+     */
+    process: string | string[];
     /** Game name shown in the titlebar. */
     title: string;
     options: Entry[];
@@ -83,4 +86,40 @@ export interface Config {
     art?: string;
     /** Whether the game is in a playable state. Omit if there is no cheap test. */
     live?(): boolean;
+    /**
+     * The builds this config supports, for configs that rely on addresses that
+     * move between builds. On attach, the first entry whose `match` fits the
+     * running game becomes `game.build`; an entry without `match` fits
+     * anything, so it can close the list as a fallback. When none fits, the
+     * trainer does not attach and reports the game version as unsupported.
+     * Omit for configs that find everything by signature.
+     */
+    builds?: Build[];
+    /** Lay the options out in this many columns; the window widens for 2. Default 1. */
+    columns?: 1 | 2;
+}
+
+/**
+ * Identifies a build. Every field given must agree with the running game.
+ * Numbers may also be written as strings, e.g. `'0x68a1b2c3'`.
+ */
+export interface BuildMatch {
+    /** Executable name, for builds that ship under different names. */
+    exe?: string;
+    /** The executable's PE header link timestamp. */
+    timestamp?: number | string;
+    /** The executable's PE header image size. */
+    size?: number | string;
+    /** Steam's build id for the install, as listed on SteamDB. */
+    steamBuild?: number | string;
+}
+
+/** One supported build, together with whatever differs in it. */
+export interface Build {
+    /** Shown in the status bar, e.g. `'Steam 24769601'`. */
+    name?: string;
+    /** Which game this is. Omit to match anything. */
+    match?: BuildMatch;
+    /** Addresses, offsets, signatures...: read back through `game.build`. */
+    [data: string]: unknown;
 }

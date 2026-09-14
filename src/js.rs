@@ -12,6 +12,7 @@ use rquickjs::loader::ImportAttributes;
 use rquickjs::module::Declared;
 use rquickjs::{CatchResultExt, Context, Ctx, Error, Function, Module, Object, Runtime, Value};
 
+use crate::game::Identity;
 use crate::mem::{Pattern, Proc};
 
 /// The attached process, reachable from JS callbacks on this thread.
@@ -53,8 +54,13 @@ pub struct Script {
     ctx: Context,
     /// the config file this was loaded from; artwork sits next to it
     pub path: PathBuf,
-    pub process: String,
+    /// executables to attach to - several when builds ship under different names
+    pub processes: Vec<String>,
     pub title: String,
+    /// names of the builds the config lists; empty when it does not care
+    pub builds: Vec<String>,
+    /// option columns in the window: 1 or 2
+    pub columns: usize,
     /// base64 image embedded in the config, used when Steam art is unavailable
     pub art: Option<String>,
     pub options: Vec<OptMeta>,
@@ -75,23 +81,64 @@ impl Script {
         register_host(&ctx)?;
 
         let name = path.to_string_lossy().replace('\\', "/");
-        let (process, title, art, options) = ctx.with(|ctx| {
+        let (processes, title, art, options, builds, columns) = ctx.with(|ctx| {
             let module = Module::declare(ctx.clone(), name.as_str(), src)
                 .catch(&ctx)
                 .map_err(|e| format!("{e}"))?;
             let (module, promise) = module.eval().catch(&ctx).map_err(|e| format!("{e}"))?;
             promise.finish::<()>().catch(&ctx).map_err(|e| format!("{e}"))?;
 
-            let process: String = module
-                .get::<_, Value>("process")
-                .ok()
-                .and_then(|v| v.get::<String>().ok())
-                .ok_or("config does not export `process`")?;
+            // `'Game.exe'` or `['Game.exe', 'Game-WinGDK.exe']`
+            let processes: Vec<String> = match module.get::<_, Value>("process") {
+                Ok(v) if v.is_string() => v.get::<String>().ok().into_iter().collect(),
+                Ok(v) if v.is_array() => v
+                    .into_array()
+                    .map(|a| a.iter::<String>().flatten().collect())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            if processes.is_empty() {
+                return Err("config does not export `process`".to_string());
+            }
             let title: String = module
                 .get::<_, Value>("title")
                 .ok()
                 .and_then(|v| v.get::<String>().ok())
-                .unwrap_or_else(|| process.clone());
+                .unwrap_or_else(|| processes[0].clone());
+
+            let columns = match module.get::<_, Value>("columns") {
+                Ok(v) if v.is_undefined() => 1,
+                Ok(v) => match v.as_number() {
+                    Some(n) if n == 1.0 || n == 2.0 => n as usize,
+                    _ => return Err("`columns` must be 1 or 2".to_string()),
+                },
+                Err(_) => 1,
+            };
+
+            let builds: Vec<String> = match module.get::<_, Value>("builds") {
+                Ok(v) if v.is_undefined() => Vec::new(),
+                Ok(v) => {
+                    let arr = v.into_array().ok_or("`builds` must be an array")?;
+                    let mut names = Vec::new();
+                    for i in 0..arr.len() {
+                        let b: Object = arr.get(i).map_err(|_| format!("builds[{i}] must be an object"))?;
+                        if let Ok(m) = b.get::<_, Object>("match") {
+                            for key in m.keys::<String>().flatten() {
+                                if !MATCH_KEYS.contains(&key.as_str()) {
+                                    return Err(format!(
+                                        "builds[{i}].match: unknown key `{key}` (use {})",
+                                        MATCH_KEYS.join(", ")
+                                    ));
+                                }
+                            }
+                        }
+                        names.push(build_name(&b, i));
+                    }
+                    ctx.globals().set("__builds", arr).map_err(|e| e.to_string())?;
+                    names
+                }
+                Err(_) => Vec::new(),
+            };
             let art: Option<String> = module
                 .get::<_, Value>("art")
                 .ok()
@@ -148,10 +195,42 @@ impl Script {
                     once: o.get::<_, bool>("once").unwrap_or(false),
                 });
             }
-            Ok::<_, String>((process, title, art, metas))
+            Ok::<_, String>((processes, title, art, metas, builds, columns))
         })?;
 
-        Ok(Script { _rt: rt, ctx, path: path.to_path_buf(), process, title, art, options })
+        Ok(Script { _rt: rt, ctx, path: path.to_path_buf(), processes, title, builds, columns, art, options })
+    }
+
+    /// Tell the config which game is running: set the `game` global, and pick
+    /// the first of its `builds` whose `match` fits.
+    ///
+    /// A build with no `match` fits anything, so a config can end its list
+    /// with a fallback. Without `builds` at all every game is accepted.
+    pub fn identify(&self, id: &Identity) -> Build {
+        self.ctx.with(|ctx| {
+            let run = || -> rquickjs::Result<Build> {
+                let game = Object::new(ctx.clone())?;
+                game.set("exe", id.exe.as_str())?;
+                game.set("timestamp", id.timestamp as f64)?;
+                game.set("size", id.size as f64)?;
+                game.set("steamBuild", id.steam_build.map(|b| b as f64))?;
+                game.set("build", Value::new_null(ctx.clone()))?;
+                ctx.globals().set("game", game.clone())?;
+
+                let Ok(builds) = ctx.globals().get::<_, rquickjs::Array>("__builds") else {
+                    return Ok(Build::Any);
+                };
+                for i in 0..builds.len() {
+                    let b: Object = builds.get(i)?;
+                    if b.get::<_, Object>("match").map_or(true, |m| fits(&m, id)) {
+                        game.set("build", b.clone())?;
+                        return Ok(Build::Known(build_name(&b, i)));
+                    }
+                }
+                Ok(Build::Unknown)
+            };
+            run().unwrap_or(Build::Unknown)
+        })
     }
 
     pub fn attach(&self, proc: Proc, base: u64, size: usize) {
@@ -235,6 +314,60 @@ impl Script {
         }
         out
     }
+}
+
+/// What a config's `builds` make of the running game.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Build {
+    /// the config lists no builds, so it takes any
+    Any,
+    /// this entry of `builds`, by name
+    Known(String),
+    /// the config lists builds and this game is none of them
+    Unknown,
+}
+
+/// Fields a build's `match` may test; anything else is a typo that would
+/// otherwise make the entry match every build.
+const MATCH_KEYS: [&str; 4] = ["exe", "timestamp", "size", "steamBuild"];
+
+/// `name`, or `build 2` for the second entry without one.
+fn build_name(b: &Object, i: usize) -> String {
+    b.get::<_, String>("name").unwrap_or_else(|_| format!("build {}", i + 1))
+}
+
+/// Whether every field `m` gives agrees with the running game.
+fn fits(m: &Object, id: &Identity) -> bool {
+    // numbers may be written as numbers or strings ("24769601", "0x68a1b2c3")
+    let number = |key: &str| -> Option<Option<f64>> {
+        let v: Value = m.get(key).ok()?;
+        if v.is_undefined() {
+            return None;
+        }
+        Some(v.as_number().or_else(|| {
+            let s = v.as_string()?.to_string().ok()?;
+            let s = s.trim();
+            match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                Some(hex) => u64::from_str_radix(hex, 16).ok().map(|n| n as f64),
+                None => s.parse().ok(),
+            }
+        }))
+    };
+    let agrees = |key: &str, actual: Option<f64>| match number(key) {
+        None => true,
+        Some(want) => want.is_some() && want == actual,
+    };
+    let exe_ok = match m.get::<_, Value>("exe") {
+        Ok(v) if !v.is_undefined() => v
+            .as_string()
+            .and_then(|s| s.to_string().ok())
+            .is_some_and(|e| e.eq_ignore_ascii_case(&id.exe)),
+        _ => true,
+    };
+    exe_ok
+        && agrees("timestamp", Some(id.timestamp as f64))
+        && agrees("size", Some(id.size as f64))
+        && agrees("steamBuild", id.steam_build.map(|b| b as f64))
 }
 
 /// The `configs` folder in use: the nearest one beside the exe or above it,
@@ -723,7 +856,9 @@ mod tests {
             let file = path.display().to_string();
             let script = Script::load(&path).unwrap_or_else(|e| panic!("{file}: {e}"));
 
-            assert!(script.process.to_ascii_lowercase().ends_with(".exe"), "{file}: process");
+            for exe in &script.processes {
+                assert!(exe.to_ascii_lowercase().ends_with(".exe"), "{file}: process {exe:?}");
+            }
             assert!(!script.title.is_empty(), "{file}: title");
             assert!(!script.options.is_empty(), "{file}: no options");
 
@@ -760,6 +895,109 @@ mod tests {
             loaded += 1;
         }
         assert!(loaded > 0, "no configs found in {}", games.display());
+    }
+
+    fn temp_script(tag: &str, src: &str) -> (Script, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("az_trainer_{tag}_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{tag}.js"));
+        std::fs::write(&path, src).unwrap();
+        (Script::load(&path).unwrap(), dir)
+    }
+
+    fn eval(script: &Script, src: &str) -> String {
+        script.ctx.with(|ctx| {
+            let v: Value = ctx.eval(src).unwrap();
+            v.get::<String>().unwrap_or_else(|_| format!("{v:?}"))
+        })
+    }
+
+    #[test]
+    fn builds_pick_the_first_entry_that_fits_the_running_game() {
+        let (script, dir) = temp_script(
+            "builds",
+            "export const process = ['Game.exe', 'Game-WinGDK.exe'];\n\
+             export const title = 'X';\n\
+             export const builds = [\n\
+               { name: 'Steam 100', match: { steamBuild: 100 }, player: 0x10 },\n\
+               { name: 'Game Pass', match: { exe: 'game-wingdk.exe', timestamp: '0x6000' }, player: 0x20 },\n\
+               { match: { timestamp: 0x7000, size: 0x9000 }, player: 0x30 },\n\
+             ];\n\
+             export const options = [{ name: 'A', tick() { return String(game.build && game.build.player); } }];\n",
+        );
+        assert_eq!(script.processes, vec!["Game.exe", "Game-WinGDK.exe"]);
+        assert_eq!(script.builds, vec!["Steam 100", "Game Pass", "build 3"]);
+
+        let id = |exe: &str, timestamp, size, steam_build| Identity {
+            exe: exe.into(),
+            timestamp,
+            size,
+            steam_build,
+        };
+        assert_eq!(script.identify(&id("Game.exe", 1, 1, Some(100))), Build::Known("Steam 100".into()));
+        assert_eq!(script.tick(0, true, 1.0).0.as_deref(), Some("16"));
+        assert_eq!(eval(&script, "String(game.steamBuild)"), "100");
+
+        assert_eq!(script.identify(&id("Game-WinGDK.exe", 0x6000, 1, None)), Build::Known("Game Pass".into()));
+        assert_eq!(script.identify(&id("Game.exe", 0x6000, 1, None)), Build::Unknown, "exe must agree too");
+        assert_eq!(script.identify(&id("Game.exe", 0x7000, 0x9000, None)), Build::Known("build 3".into()));
+        assert_eq!(script.identify(&id("Game.exe", 0x7000, 0x9001, None)), Build::Unknown, "every field must agree");
+        assert_eq!(eval(&script, "String(game.build)"), "null", "no stale build after a miss");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_build_without_match_is_a_fallback_and_no_builds_accepts_anything() {
+        let (fallback, d1) = temp_script(
+            "fallback",
+            "export const process = 'X.exe';\n\
+             export const builds = [{ name: 'v1', match: { timestamp: 1 } }, { name: 'other' }];\n\
+             export const options = [];\n",
+        );
+        let id = Identity { exe: "X.exe".into(), timestamp: 2, ..Default::default() };
+        assert_eq!(fallback.identify(&id), Build::Known("other".into()));
+
+        let (plain, d2) = temp_script("plain", "export const process = 'X.exe';\nexport const options = [];\n");
+        assert_eq!(plain.identify(&id), Build::Any);
+        assert_eq!(eval(&plain, "game.exe"), "X.exe");
+        std::fs::remove_dir_all(&d1).ok();
+        std::fs::remove_dir_all(&d2).ok();
+    }
+
+    #[test]
+    fn a_misspelt_match_key_is_an_error_not_a_match_for_everything() {
+        let dir = std::env::temp_dir().join(format!("az_trainer_typo_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("typo.js");
+        std::fs::write(
+            &path,
+            "export const process = 'X.exe';\n\
+             export const builds = [{ match: { timeStamp: 1 } }];\n\
+             export const options = [];\n",
+        )
+        .unwrap();
+        let err = Script::load(&path).err().expect("load should fail");
+        assert!(err.contains("timeStamp"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn columns_default_to_one_and_only_one_or_two_load() {
+        let (one, d1) = temp_script("cols1", "export const process = 'X.exe';\nexport const options = [];\n");
+        let (two, d2) = temp_script(
+            "cols2",
+            "export const process = 'X.exe';\nexport const columns = 2;\nexport const options = [];\n",
+        );
+        assert_eq!((one.columns, two.columns), (1, 2));
+
+        let dir = std::env::temp_dir().join(format!("az_trainer_cols3_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cols3.js");
+        std::fs::write(&path, "export const process = 'X.exe';\nexport const columns = 3;\nexport const options = [];\n").unwrap();
+        assert!(Script::load(&path).is_err());
+        for d in [d1, d2, dir] {
+            std::fs::remove_dir_all(d).ok();
+        }
     }
 
     #[test]

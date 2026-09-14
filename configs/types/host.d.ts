@@ -142,5 +142,25 @@ interface Mem {
 /** Game memory and code injection, bound to the attached process. */
 declare const mem: Mem;
 
+/** The game a script is attached to. */
+interface Game {
+    /** The executable that was matched, as the config's `process` spells it. */
+    exe: string;
+    /** The executable's PE header link timestamp. */
+    timestamp: number;
+    /** The executable's PE header image size. */
+    size: number;
+    /** Steam's build id, for a Steam install. */
+    steamBuild: number | undefined;
+    /** The entry of the config's `builds` that fits this game; `null` without `builds`. */
+    build: import('./trainer').Build | null;
+}
+
+/**
+ * The attached game. Set on attach, so read it from `tick` or `live`, never
+ * at a config's top level.
+ */
+declare const game: Game;
+
 /** Print a line to the trainer's console output, prefixed with `[js]`. */
 declare function log(message: string): void;

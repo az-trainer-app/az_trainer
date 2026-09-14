@@ -8,7 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::art;
-use crate::js::Script;
+use crate::game::Identity;
+use crate::js::{Build, Script};
 use crate::mem::{find_pid, Proc};
 
 const TICK: Duration = Duration::from_millis(100);
@@ -34,7 +35,9 @@ pub struct Shared {
     /// per option: 0 = off, else 1-based index into `levels` (1 = on for toggles)
     pub level: Vec<usize>,
     pub values: Vec<Option<String>>,
-    pub art: Option<PathBuf>,
+    /// option columns the config asks for
+    pub columns: usize,
+    pub art: Option<art::Art>,
     /// status bar text for the loaded config: file, update date, checksum
     pub config_info: Option<String>,
     /// the loaded config relative to `configs/`, e.g. `games/dawnwalker.js`
@@ -174,6 +177,7 @@ fn publish(s: &mut Shared, script: &Script, level: Vec<usize>) {
     s.keys = script.options.iter().map(|o| o.keys.clone()).collect();
     s.level = level;
     s.values = script.options.iter().map(|_| None).collect();
+    s.columns = script.columns;
     s.art = art::resolve(script);
     s.config_info = Some(config_info(&script.path));
     s.config_rel = script
@@ -246,6 +250,7 @@ fn forget_game(shared: &Arc<Mutex<Shared>>, msg: &str) {
         s.keys.clear(); // releases the shortcuts for other programs
         s.level.clear();
         s.values.clear();
+        s.columns = 1;
     }
 }
 
@@ -332,13 +337,14 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
             continue;
         }
 
-        let mut chosen: Option<(Script, u32)> = None;
+        let mut chosen: Option<(Script, String, u32)> = None;
         let mut errors: Vec<String> = Vec::new();
         for p in &paths {
             match Script::load(p) {
                 Ok(s) => {
-                    if let Some(pid) = find_pid(&s.process) {
-                        chosen = Some((s, pid));
+                    let running = s.processes.iter().find_map(|exe| Some((exe.clone(), find_pid(exe)?)));
+                    if let Some((exe, pid)) = running {
+                        chosen = Some((s, exe, pid));
                         break;
                     }
                 }
@@ -349,7 +355,7 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
             }
         }
 
-        let Some((script, pid)) = chosen else {
+        let Some((script, exe, pid)) = chosen else {
             status(
                 &shared,
                 if errors.is_empty() {
@@ -367,13 +373,35 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
             nap(&quit, Duration::from_secs(2));
             continue;
         };
-        let Some((base, size)) = proc.module(&script.process) else {
+        let Some((base, size)) = proc.module(&exe) else {
             status(&shared, "module not found, retrying...");
             continue;
         };
 
         status(&shared, "scanning...");
+        let identity = Identity::read(&proc, &exe, base);
         script.attach(proc, base, size);
+        let build = script.identify(&identity);
+        println!("[engine] {} is {} - {build:?}", exe, identity.describe());
+
+        if build == Build::Unknown {
+            // the config's addresses are for other builds: writing them here
+            // would poke whatever this build keeps there instead
+            println!("[engine] no build matches; {} lists: {}", script.title, script.builds.join(", "));
+            script.detach();
+            status(
+                &shared,
+                format!("unsupported game version ({}) - waiting for a script update", identity.short()),
+            );
+            let stamp = config_stamp(&script.path);
+            while !quit.load(Ordering::Relaxed)
+                && find_pid(&exe) == Some(pid)
+                && config_stamp(&script.path) == stamp
+            {
+                nap(&quit, Duration::from_secs(1));
+            }
+            continue;
+        }
 
         let saved = load_settings(&script.path);
         if let Ok(mut s) = shared.lock() {
@@ -394,6 +422,9 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                 })
                 .collect();
             publish(&mut s, &script, level);
+            if let (Build::Known(name), Some(info)) = (&build, s.config_info.as_mut()) {
+                info.push_str(&format!("  ·  {name}"));
+            }
             s.status = format!("attached (pid {pid})");
             println!("[engine] attached {} pid {pid}, {} options, art={:?}",
                      script.title, s.names.len(), s.art);
@@ -413,7 +444,7 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                 script.detach();
                 return;
             }
-            if find_pid(&script.process) != Some(pid) {
+            if find_pid(&exe) != Some(pid) {
                 forget_game(&shared, "game closed - looking for a game...");
                 script.detach();
                 break;

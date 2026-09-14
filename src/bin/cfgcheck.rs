@@ -7,6 +7,8 @@
 mod mem;
 #[path = "../finder.rs"]
 mod finder;
+#[path = "../game.rs"]
+mod game;
 #[path = "../hold.rs"]
 mod hold;
 #[path = "../js.rs"]
@@ -23,7 +25,10 @@ fn main() {
     };
     match js::Script::load(std::path::Path::new(&path)) {
         Ok(s) => {
-            println!("OK  process={}  title={}", s.process, s.title);
+            println!("OK  process={}  title={}", s.processes.join(" | "), s.title);
+            if !s.builds.is_empty() {
+                println!("    builds: {}", s.builds.join(", "));
+            }
             println!("    art={:?}", crate::art::resolve(&s));
             println!("    {} options:", s.options.len());
             for o in &s.options {

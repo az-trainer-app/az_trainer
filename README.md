@@ -16,7 +16,7 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 
 ## Features
 
-- Detects the running game automatically
+- Detects the running game automatically, and its version: a script never touches a build it was not made for
 - Remembers your settings per game
 - Keyboard shortcuts (e.g. Alt+F1-F3 for speed), with a brief on-screen notice in game
 - Updates itself, including new games and fixes

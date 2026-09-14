@@ -5,6 +5,7 @@ mod art;
 mod devtools;
 mod engine;
 mod finder;
+mod game;
 mod hold;
 #[cfg(windows)]
 mod hotkey;
@@ -21,9 +22,9 @@ use std::time::Duration;
 
 use engine::Engine;
 use gpui::{
-    div, img, prelude::*, px, rgb, rgba, size, App,
-    Application, Bounds, Context, FontWeight, MouseButton, ObjectFit, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    canvas, div, img, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, rgba, size,
+    Animation, AnimationExt, App, Application, Bounds, Context, FontWeight, MouseButton,
+    ObjectFit, PathBuilder, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 
 /// Displayed as "AZ Trainer v1.0.1"; the value comes from Cargo.toml.
@@ -63,7 +64,7 @@ impl Row {
 
 // layout metrics, also used to compute the window height
 const PAD: f32 = 14.0; // outer padding on every side
-const BANNER_H: f32 = 108.0; // full-width art stripe, title overlaid on it
+const BANNER_H: f32 = art::BANNER_H; // full-width art stripe, title overlaid on it
 const SEARCH_H: f32 = 170.0; // window height while no game is attached
 const DOTS: usize = 8;       // spinner dots
 const FOOTER_LINE_H: f32 = 30.0; // one update notice line
@@ -73,7 +74,7 @@ const ROW_H: f32 = 28.0; // a toggle row
 const SEP_H: f32 = 22.0; // a separator row
 const GAP: f32 = 6.0;
 const SECTION_GAP: f32 = 12.0;
-const WIDTH: f32 = 420.0;
+const COLUMN_GAP: f32 = 20.0; // between the two option columns
 
 struct Trainer {
     engine: Engine,
@@ -81,7 +82,9 @@ struct Trainer {
     status: SharedString,
     rows: Vec<Row>,
     values: Vec<SharedString>,
-    art: Option<PathBuf>,
+    art: Option<art::Art>,
+    /// option columns the config asks for
+    columns: usize,
     /// false while no game is attached: the UI shows the spinner instead
     ready: bool,
     /// spinner phase, advanced once per UI tick
@@ -137,6 +140,7 @@ impl Trainer {
             rows: Vec::new(),
             values: Vec::new(),
             art: None,
+            columns: 1,
             ready: false,
             frame: 0,
             titled: String::new(),
@@ -194,6 +198,7 @@ impl Trainer {
         };
         self.ready = s.ready;
         self.art = s.art.clone();
+        self.columns = s.columns;
         self.config_info = s.config_info.clone().map(Into::into);
         if !s.ready {
             self.hint = None;
@@ -245,7 +250,11 @@ impl Trainer {
             blocks += 1;
         }
         if rows > 0.0 {
-            h += self.rows.iter().map(Row::height).sum::<f32>() + (rows - 1.0).max(0.0) * GAP;
+            h += self
+                .row_columns()
+                .into_iter()
+                .map(|c| stack_height(&self.rows[c].iter().map(Row::height).collect::<Vec<_>>()))
+                .fold(0.0, f32::max);
             blocks += 1;
         }
         if blocks == 2 {
@@ -363,6 +372,120 @@ impl Trainer {
         )
     }
 
+    /// One entry of `rows`: a divider, or an option's name with its checkbox
+    /// or level pills.
+    fn option_row(&self, i: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let row = &self.rows[i];
+        if let Some(heading) = &row.separator {
+            return separator(heading);
+        }
+        let on = row.level > 0;
+        let has_levels = !row.levels.is_empty();
+
+        div()
+            .h(px(ROW_H))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_2()
+            .rounded_md()
+            .child(
+                // name + checkbox (checkbox only for plain toggles)
+                div()
+                    .id(("name", i))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .when_some(
+                        row.keys.first().filter(|_| !has_levels).cloned(),
+                        |d, key| {
+                            let hint: SharedString =
+                                format!("{}  ·  {key}", row.name).into();
+                            d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
+                                this.hover_hint(hint.clone(), *hovered);
+                                cx.notify();
+                            }))
+                        },
+                    )
+                    .when(!has_levels, |d| {
+                        d.cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.engine.cycle(i);
+                                    this.pull();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(checkbox(on))
+                    })
+                    .child(
+                        div()
+                            .text_color(rgb(if on { TEXT } else { DIM }))
+                            .child(row.name.clone()),
+                    ),
+            )
+            // level pills: 2x / 4x / 8x
+            .when(has_levels, |d| {
+                d.child(div().flex().gap_1().children(
+                    row.levels.iter().enumerate().map(|(k, mult)| {
+                        let sel = row.level == k + 1;
+                        let caption = match row.labels.get(k) {
+                            Some(l) => l.clone(),
+                            None => format!("{}x", *mult as i32),
+                        };
+                        div()
+                            .id(("lvl", (i * 16 + k) as u64))
+                            .when_some(row.keys.get(k).cloned(), |d, key| {
+                                let hint: SharedString =
+                                    format!("{} {caption}  ·  {key}", row.name).into();
+                                d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
+                                    this.hover_hint(hint.clone(), *hovered);
+                                    cx.notify();
+                                }))
+                            })
+                            .px_2()
+                            .py(px(1.))
+                            .rounded_sm()
+                            .border_1()
+                            .cursor_pointer()
+                            .border_color(rgb(if sel { ACCENT } else { PANEL }))
+                            .bg(rgb(if sel { ACCENT } else { PANEL }))
+                            .text_color(rgb(if sel { 0xffffff } else { DIM }))
+                            .text_xs()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _e, _w, cx| {
+                                    this.engine.set_level(i, k + 1);
+                                    this.pull();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(caption)
+                    }),
+                ))
+            })
+            .into_any_element()
+    }
+
+    /// The window's width: wider while a two-column config is attached.
+    fn width(&self) -> f32 {
+        art::window_width(if self.ready { self.columns } else { 1 })
+    }
+
+    /// `rows` split into the columns they are shown in, as index ranges.
+    fn row_columns(&self) -> Vec<std::ops::Range<usize>> {
+        let n = self.rows.len();
+        if self.columns < 2 || n < 2 {
+            return vec![0..n];
+        }
+        let heights: Vec<f32> = self.rows.iter().map(Row::height).collect();
+        let separators: Vec<bool> = self.rows.iter().map(|r| r.separator.is_some()).collect();
+        let at = split_point(&heights, &separators);
+        vec![0..at, at..n]
+    }
+
     /// Hand over to the freshly installed exe.
     ///
     /// The engine is shut down first and the new instance is told to wait for
@@ -377,6 +500,53 @@ impl Trainer {
         }
         cx.quit();
     }
+}
+
+/// How often the glints cross the banner art, how much of that cycle one
+/// crossing takes, and where in the cycle each pass starts - the rest of the
+/// time the band waits off the right edge.
+const SWEEP_EVERY: Duration = Duration::from_secs(7);
+const SWEEP_CROSSING: f32 = 0.045;
+const SWEEP_PASSES: [f32; 2] = [0.0, 0.055];
+/// Width of the glint band.
+const SWEEP_BAND: f32 = 140.0;
+/// Gradient direction in degrees (90 = straight across), so the band leans.
+const SWEEP_ANGLE: f32 = 110.0;
+
+/// A soft band of light that crosses the banner art now and then.
+///
+/// GPUI has no hook for custom shaders, so this is two gradient quads - clear
+/// to faint white, then back to clear - slid across by an animation. Only
+/// rendered while the window is focused: a repeating animation asks for a
+/// frame every vsync, which is not worth spending on a window behind the game.
+fn light_sweep(width: f32) -> impl IntoElement {
+    // white at zero alpha rather than transparent black, so the fade does not
+    // pass through grey on its way in
+    let clear = rgba(0xffffff00);
+    let glint = rgba(0xffffff1c);
+    let half = || div().h_full().w(px(SWEEP_BAND / 2.0));
+    div()
+        .absolute()
+        .top_0()
+        .h_full()
+        .w(px(SWEEP_BAND))
+        .flex()
+        .child(half().bg(linear_gradient(SWEEP_ANGLE,linear_color_stop(clear, 0.), linear_color_stop(glint, 1.))))
+        .child(half().bg(linear_gradient(SWEEP_ANGLE,linear_color_stop(glint, 0.), linear_color_stop(clear, 1.))))
+        .with_animation("banner-sweep", Animation::new(SWEEP_EVERY).repeat(), move |band, t| {
+            let x = SWEEP_PASSES
+                .iter()
+                .find_map(|&start| {
+                    let p = (t - start) / SWEEP_CROSSING;
+                    (0.0..1.0).contains(&p).then(|| {
+                        let eased = p * p * (3.0 - 2.0 * p); // smoothstep: eases in and out
+                        -SWEEP_BAND + (width + SWEEP_BAND) * eased
+                    })
+                })
+                // between passes: parked just past the right edge, clipped by the banner
+                .unwrap_or(width);
+            band.left(px(x))
+        })
 }
 
 /// The game name over the banner: white with a subtle black drop shadow, drawn
@@ -394,6 +564,63 @@ fn title_label(title: SharedString) -> impl IntoElement {
                 .child(title.clone()),
         )
         .child(text().text_color(rgb(0xffffff)).child(title))
+}
+
+/// A checkbox. Off: an outlined square. On: filled with the accent, rimmed a
+/// shade lighter, with a white tick drawn as a path - no glyph, so it cannot
+/// fall back to tofu.
+fn checkbox(on: bool) -> impl IntoElement {
+    const BOX: f32 = 16.0;
+    div()
+        .flex_none()
+        .w(px(BOX))
+        .h(px(BOX))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(rgb(if on { mix(ACCENT, 0xffffff, 0.3) } else { DIM }))
+        .bg(rgb(if on { ACCENT } else { BG }))
+        .when(on, |d| {
+            d.child(
+                canvas(
+                    |_, _, _| {},
+                    |bounds, _, window, _| {
+                        // in the 14px inside the border
+                        let at = |x: f32, y: f32| point(bounds.origin.x + px(x), bounds.origin.y + px(y));
+                        let mut tick = PathBuilder::stroke(px(2.));
+                        tick.move_to(at(3.2, 7.2));
+                        tick.line_to(at(5.9, 9.9));
+                        tick.line_to(at(10.9, 4.3));
+                        if let Ok(path) = tick.build() {
+                            window.paint_path(path, rgb(0xffffff));
+                        }
+                    },
+                )
+                .size_full(),
+            )
+        })
+}
+
+/// Height of rows stacked with `GAP` between them.
+fn stack_height(heights: &[f32]) -> f32 {
+    heights.iter().sum::<f32>() + heights.len().saturating_sub(1) as f32 * GAP
+}
+
+/// Where the second column starts: the split that leaves the taller column
+/// shortest. A break just before a separator keeps its group together, so it
+/// wins unless splitting inside a group is more than a couple of rows more
+/// even. A column never ends on a separator.
+fn split_point(heights: &[f32], separators: &[bool]) -> usize {
+    let n = heights.len();
+    let cost = |at: usize| stack_height(&heights[..at]).max(stack_height(&heights[at..]));
+    // on a tie the later split wins, so the left column takes the extra row
+    let best = |candidates: Vec<usize>| {
+        candidates.into_iter().min_by(|&a, &b| cost(a).total_cmp(&cost(b)).then(b.cmp(&a)))
+    };
+    let anywhere = best((1..n).filter(|&i| !separators[i - 1]).collect()).unwrap_or(n.div_ceil(2));
+    match best((1..n).filter(|&i| separators[i]).collect()) {
+        Some(group) if cost(group) <= cost(anywhere) + 2.0 * (ROW_H + GAP) => group,
+        _ => anywhere,
+    }
 }
 
 /// A divider between groups of options: `── Heading ──────`, or a plain line
@@ -439,7 +666,7 @@ fn spinner(frame: usize) -> impl IntoElement {
 }
 
 impl Render for Trainer {
-    fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Grow/shrink so nothing is clipped. Measured against the window's
         // real height rather than the last value we asked for: a request the
         // window manager drops used to leave us convinced we had resized,
@@ -453,14 +680,19 @@ impl Render for Trainer {
             app_title()
         };
         if want_title != self.titled {
-            _w.set_window_title(&want_title);
+            window.set_window_title(&want_title);
             self.titled = want_title;
         }
 
-        let wanted = self.wanted_height();
-        if (wanted - f32::from(_w.viewport_size().height)).abs() > 1.0 {
-            _w.resize(size(px(WIDTH), px(wanted)));
+        let (width, wanted) = (self.width(), self.wanted_height());
+        let viewport = window.viewport_size();
+        if (wanted - f32::from(viewport.height)).abs() > 1.0
+            || (width - f32::from(viewport.width)).abs() > 1.0
+        {
+            window.resize(size(px(width), px(wanted)));
         }
+        // the banner glint and liquid play whenever there is art
+        let sweep = self.art.is_some();
 
         if !self.ready {
             return div()
@@ -485,6 +717,15 @@ impl Render for Trainer {
                 .into_any_element();
         }
 
+        let columns: Vec<_> = self
+            .row_columns()
+            .into_iter()
+            .map(|range| {
+                let rows: Vec<gpui::AnyElement> = range.map(|i| self.option_row(i, cx)).collect();
+                div().flex_1().flex().flex_col().gap(px(GAP)).children(rows)
+            })
+            .collect();
+
         div()
             .flex()
             .flex_col()
@@ -504,9 +745,30 @@ impl Render for Trainer {
                     .h(px(BANNER_H))
                     .bg(rgb(PANEL))
                     .overflow_hidden()
-                    .when_some(self.art.clone(), |d, p| {
-                        d.child(img(p).absolute().inset_0().size_full().object_fit(ObjectFit::Cover))
+                    .when_some(self.art.as_ref(), |d, a| {
+                        d.child(
+                            img(a.banner.clone())
+                                .absolute()
+                                .inset_0()
+                                .size_full()
+                                .object_fit(ObjectFit::Cover),
+                        )
                     })
+                    // the stretched fills either side, stirring like a liquid
+                    .when_some(self.art.as_ref().filter(|_| sweep), |d, a| {
+                        d.children(a.liquid.iter().enumerate().map(|(i, l)| {
+                            img(l.frames.clone())
+                                .id(("banner-liquid", i))
+                                .absolute()
+                                .top_0()
+                                .left(px(width * l.left))
+                                .w(px(width * l.width))
+                                .h_full()
+                                .object_fit(ObjectFit::Fill)
+                        }))
+                    })
+                    // over the art, under the title
+                    .when(sweep, |d| d.child(light_sweep(width)))
                     .child(
                         div()
                             .absolute()
@@ -542,114 +804,8 @@ impl Render for Trainer {
                         })),
                 )
             })
-            // toggles
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(GAP))
-                    .children(self.rows.iter().enumerate().map(|(i, row)| {
-                        if let Some(heading) = &row.separator {
-                            return separator(heading);
-                        }
-                        let on = row.level > 0;
-                        let has_levels = !row.levels.is_empty();
-
-                        div()
-                            .h(px(ROW_H))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_2()
-                            .px_2()
-                            .rounded_md()
-                            .child(
-                                // name + checkbox (checkbox only for plain toggles)
-                                div()
-                                    .id(("name", i))
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .when_some(
-                                        row.keys.first().filter(|_| !has_levels).cloned(),
-                                        |d, key| {
-                                            let hint: SharedString =
-                                                format!("{}  ·  {key}", row.name).into();
-                                            d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
-                                                this.hover_hint(hint.clone(), *hovered);
-                                                cx.notify();
-                                            }))
-                                        },
-                                    )
-                                    .when(!has_levels, |d| {
-                                        d.cursor_pointer()
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _e, _w, cx| {
-                                                    this.engine.cycle(i);
-                                                    this.pull();
-                                                    cx.notify();
-                                                }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .w(px(14.))
-                                                    .h(px(14.))
-                                                    .rounded_sm()
-                                                    .border_1()
-                                                    .border_color(rgb(if on { ACCENT } else { DIM }))
-                                                    .bg(rgb(if on { ACCENT } else { BG })),
-                                            )
-                                    })
-                                    .child(
-                                        div()
-                                            .text_color(rgb(if on { TEXT } else { DIM }))
-                                            .child(row.name.clone()),
-                                    ),
-                            )
-                            // level pills: 2x / 4x / 8x
-                            .when(has_levels, |d| {
-                                d.child(div().flex().gap_1().children(
-                                    row.levels.iter().enumerate().map(|(k, mult)| {
-                                        let sel = row.level == k + 1;
-                                        let caption = match row.labels.get(k) {
-                                            Some(l) => l.clone(),
-                                            None => format!("{}x", *mult as i32),
-                                        };
-                                        div()
-                                            .id(("lvl", (i * 16 + k) as u64))
-                                            .when_some(row.keys.get(k).cloned(), |d, key| {
-                                                let hint: SharedString =
-                                                    format!("{} {caption}  ·  {key}", row.name).into();
-                                                d.on_hover(cx.listener(move |this, hovered: &bool, _w, cx| {
-                                                    this.hover_hint(hint.clone(), *hovered);
-                                                    cx.notify();
-                                                }))
-                                            })
-                                            .px_2()
-                                            .py(px(1.))
-                                            .rounded_sm()
-                                            .border_1()
-                                            .cursor_pointer()
-                                            .border_color(rgb(if sel { ACCENT } else { PANEL }))
-                                            .bg(rgb(if sel { ACCENT } else { PANEL }))
-                                            .text_color(rgb(if sel { 0xffffff } else { DIM }))
-                                            .text_xs()
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(move |this, _e, _w, cx| {
-                                                    this.engine.set_level(i, k + 1);
-                                                    this.pull();
-                                                    cx.notify();
-                                                }),
-                                            )
-                                            .child(caption)
-                                    }),
-                                ))
-                            })
-                            .into_any_element()
-                    })),
-            ),
+            // toggles, in one or two columns
+            .child(div().flex().gap(px(COLUMN_GAP)).children(columns)),
             )
             .children(self.footer(cx))
             .children(self.status_bar(cx))
@@ -763,7 +919,7 @@ fn main() {
     apply_window_icon();
 
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(WIDTH), px(BANNER_H + PAD * 2.0)), cx);
+        let bounds = Bounds::centered(None, size(px(art::window_width(1)), px(BANNER_H + PAD * 2.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -778,4 +934,43 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const R: f32 = ROW_H;
+    const S: f32 = SEP_H;
+
+    #[test]
+    fn columns_break_before_a_separator_when_that_is_even_enough() {
+        // Combat: 3 options, Movement: 3 options
+        let heights = [S, R, R, R, S, R, R, R];
+        let seps = [true, false, false, false, true, false, false, false];
+        assert_eq!(split_point(&heights, &seps), 4);
+    }
+
+    #[test]
+    fn a_lopsided_group_is_split_inside_rather_than_left_uneven() {
+        // one option, then a group of nine
+        let heights = [R, S, R, R, R, R, R, R, R, R, R];
+        let seps = [false, true, false, false, false, false, false, false, false, false, false];
+        let at = split_point(&heights, &seps);
+        assert!((5..=7).contains(&at), "split at {at}");
+    }
+
+    #[test]
+    fn without_separators_the_left_column_takes_the_extra_row() {
+        assert_eq!(split_point(&[R; 5], &[false; 5]), 3);
+        assert_eq!(split_point(&[R; 4], &[false; 4]), 2);
+    }
+
+    #[test]
+    fn a_column_never_ends_on_a_separator() {
+        let heights = [R, R, S, R, R];
+        let seps = [false, false, true, false, false];
+        let at = split_point(&heights, &seps);
+        assert!(!seps[at - 1], "left column ends on the separator (split {at})");
+    }
 }

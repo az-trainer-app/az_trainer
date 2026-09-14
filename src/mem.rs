@@ -166,6 +166,19 @@ impl Proc {
         None
     }
 
+    /// Full path of the process's executable.
+    pub fn image_path(&self) -> Option<std::path::PathBuf> {
+        use windows::core::PWSTR;
+        use windows::Win32::System::Threading::{QueryFullProcessImageNameW, PROCESS_NAME_WIN32};
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        unsafe {
+            QueryFullProcessImageNameW(self.handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len)
+                .ok()?;
+        }
+        Some(String::from_utf16_lossy(&buf[..len as usize]).into())
+    }
+
     pub fn read(&self, addr: u64, buf: &mut [u8]) -> bool {
         if addr == 0 {
             return false;

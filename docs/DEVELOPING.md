@@ -66,6 +66,44 @@ Put it in `configs/games/` with `somegame.jpg` beside it for artwork.
 | `lib/option.js` | `whileOn`, `whileFound`, `patchWhileOn` |
 | `lib/unreal.js` | UE5 pawn walks, pointer chains, attribute holds |
 
+### Several builds of a game
+
+A config that finds everything by signature usually survives patches as is.
+One that relies on fixed addresses lists the builds it knows, each carrying
+whatever differs in it, and shares everything else:
+
+```js
+export const process = ['Game.exe', 'Game-WinGDK-Shipping.exe'];
+
+export const builds = [
+    { name: 'Steam 24769601', match: { steamBuild: 24769601 }, player: 0xcbba6d8 },
+    { name: 'Game Pass 1.0.2', match: { exe: 'Game-WinGDK-Shipping.exe', timestamp: 0x68a1b2c3 }, player: 0xcbbf560 },
+];
+
+function player() {
+    return mem.u64(mem.moduleBase() + game.build.player);
+}
+```
+
+On attach, the first entry whose `match` fits becomes `game.build`. `match` can
+test `exe`, `timestamp` and `size` (from the executable's PE header) and
+`steamBuild` (from the Steam app manifest); every field given must agree. An
+entry without `match` fits anything, as a last fallback.
+
+When nothing fits, the trainer does not attach: the status reads *unsupported
+game version* and names the build, and the console gets the full identity
+(`[engine] Game.exe is Steam build 24769601, timestamp 0x68a1b2c3, size 0xd2e1000`)
+to copy into a new entry. The build that did match is named in the status bar.
+
+`game` also holds `exe`, `timestamp`, `size` and `steamBuild` for the running
+game. It is set on attach, so read it from `tick` or `live`, not at the top level.
+
+### Two columns
+
+`export const columns = 2` widens the window and lays the options out in two
+columns. The split keeps the columns even, breaking before a separator where it
+can so each group stays together.
+
 ### Porting a Cheat Engine table
 
 | Cheat Engine | AZ Trainer |
