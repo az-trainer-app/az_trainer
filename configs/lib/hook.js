@@ -59,6 +59,9 @@ export function jmpAbs(target) {
     return [0xff, 0x25, 0x00, 0x00, 0x00, 0x00, ...u64(target)];
 }
 
+/** Length of `jmpAbs` - the minimum a far detour can overwrite. */
+export const JMP_ABS_LEN = 14;
+
 /**
  * Plain byte patch with restore -- no cave, no jump.
  *
@@ -93,20 +96,40 @@ export function patch(addr, bytes) {
  * @param {number} target
  * @param {number} stealLen bytes to overwrite; >= 5, ending on an instruction boundary
  * @param {(cave: number, original: number[]) => boolean} fill
- * @param {{ free?: boolean }} [opts] `free: false` keeps the cave allocated
- *   after restore(), for caves the game may still be executing
+ * @param {{ free?: boolean, farSteal?: number }} [opts] `free: false` keeps the
+ *   cave allocated after restore(), for caves the game may still be executing.
+ *   `farSteal` is how many bytes may be taken when no cave is free within
+ *   `E9 rel32` range and a 14-byte absolute jump is the only way in - at least
+ *   14, and like `stealLen` it must end on an instruction boundary. Without it
+ *   a far cave is refused rather than risking a half-overwritten instruction.
  * @returns {Detour | null} null if it could not be installed
  */
-export function cave(target, stealLen, fill, { free = true } = {}) {
+export function cave(target, stealLen, fill, { free = true, farSteal = 0 } = {}) {
     if (!target || stealLen < 5) return null;
-    const original = mem.readBytes(target, stealLen);
-    if (!original || original.length !== stealLen) return null;
     const at = mem.alloc(0x1000, target);
     if (!at) return null;
 
-    const rel = at - (target + 5); // E9 rel32 must reach the cave
-    const inRange = rel <= 0x7ffffff0 && rel >= -0x7ffffff0;
-    if (!inRange || !fill(at, original) || !mem.writeBytes(target, [0xe9, ...i32(rel), ...nops(stealLen - 5)])) {
+    // A 5-byte `E9 rel32` only reaches +/-2GB. The free space that close to a
+    // game's code fragments into sub-64KB slivers the longer it runs, and once
+    // none is left the allocator can only hand back a block far away. A
+    // 14-byte `jmp [rip+0]` reaches it regardless, but it overwrites more of
+    // the target - so it is only used when the caller has said how many bytes
+    // there are to take.
+    const rel = at - (target + 5);
+    const near = rel <= 0x7ffffff0 && rel >= -0x7ffffff0;
+    const steal = near ? stealLen : farSteal;
+    if (!steal || (!near && steal < JMP_ABS_LEN)) {
+        mem.free(at);
+        return null;
+    }
+
+    const original = mem.readBytes(target, steal);
+    if (!original || original.length !== steal) {
+        mem.free(at);
+        return null;
+    }
+    const entry = near ? [0xe9, ...i32(rel)] : jmpAbs(at);
+    if (!fill(at, original) || !mem.writeBytes(target, [...entry, ...nops(steal - entry.length)])) {
         mem.free(at);
         return null;
     }
@@ -128,11 +151,17 @@ export function cave(target, stealLen, fill, { free = true } = {}) {
  * @param {number} target where to hook
  * @param {number} stealLen bytes to overwrite; >= 5, ending on an instruction boundary
  * @param {number[]} code your instruction bytes, run before the stolen ones
+ * @param {{ free?: boolean, farSteal?: number }} [opts] see cave()
  * @returns {Detour | null} null if it could not be installed
  */
-export function detour(target, stealLen, code) {
-    return cave(target, stealLen, (at, original) =>
-        mem.writeBytes(at, [...code, ...original, ...jmpAbs(target + stealLen)]),
+export function detour(target, stealLen, code, opts) {
+    return cave(
+        target,
+        stealLen,
+        // `original.length`, not stealLen: a far detour takes more bytes, and
+        // the jump back has to clear all of them.
+        (at, original) => mem.writeBytes(at, [...code, ...original, ...jmpAbs(target + original.length)]),
+        opts,
     );
 }
 
@@ -186,7 +215,7 @@ export function holdFieldAtSibling(target, stealLen, flagPtrOff, flagOff, curOff
             0x74, copy.length,                     // je skip
             ...copy,
             ...original,
-            ...jmpAbs(target + stealLen),
+            ...jmpAbs(target + original.length),
         ]),
     );
 }

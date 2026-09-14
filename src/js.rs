@@ -164,6 +164,27 @@ impl Script {
         TARGET.with(|t| *t.borrow_mut() = None);
     }
 
+    /// Evaluate a snippet in the config's own context.
+    ///
+    /// Same `mem`, same attached process, same hooks: research can install
+    /// something, leave it running, and come back for what it recorded.
+    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
+    pub fn eval(&self, src: &str) -> Result<String, String> {
+        self.ctx.with(|ctx| {
+            let v: Value = ctx.eval(src).catch(&ctx).map_err(|e| format!("{e}"))?;
+            if let Some(s) = v.as_string().and_then(|s| s.to_string().ok()) {
+                return Ok(s);
+            }
+            let text = ctx
+                .globals()
+                .get::<_, Object>("JSON")
+                .ok()
+                .and_then(|j| j.get::<_, Function>("stringify").ok())
+                .and_then(|f| f.call::<_, String>((v.clone(),)).ok());
+            Ok(text.unwrap_or_else(|| "undefined".into()))
+        })
+    }
+
     /// Ask the config whether the game is in a playable state, if it says.
     /// Without this the engine can only guess from whether an option produced
     /// a display string - which is always false once readings are turned off.
@@ -357,6 +378,54 @@ fn register_host(ctx: &Context) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
 
+        // [base, size, protect, type] for the region an address is in, or []
+        // if it is not committed. `protect & 0xF0` covers the executable
+        // values (0x10 EXECUTE, 0x20 EXECUTE_READ, 0x40 EXECUTE_READWRITE,
+        // 0x80 EXECUTE_WRITECOPY).
+        mem.set(
+            "region",
+            Function::new(ctx.clone(), |addr: f64| -> Vec<f64> {
+                with_target(
+                    |t| match t.proc.region_of(addr as u64) {
+                        Some((b, s, p, ty)) => vec![b as f64, s as f64, p as f64, ty as f64],
+                        None => Vec::new(),
+                    },
+                    Vec::new(),
+                )
+            })
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // A timer is the one thing that falls by the wall-clock time between
+        // two reads, so this finds one without knowing anything else about it.
+        // Returns a flat [addr, from, to, ...]; the sweep is native because a
+        // JS pass over gigabytes would not finish.
+        mem.set(
+            "findFalling",
+            Function::new(
+                ctx.clone(),
+                |lo: f64, hi: f64, ms: f64, limit: f64| -> Vec<f64> {
+                    with_target(
+                        |t| {
+                            let mut out = Vec::new();
+                            for (a, from, to) in
+                                t.proc.find_falling(lo as f32, hi as f32, ms as u64, limit as usize)
+                            {
+                                out.push(a as f64);
+                                out.push(from as f64);
+                                out.push(to as f64);
+                            }
+                            out
+                        },
+                        Vec::new(),
+                    )
+                },
+            )
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
         // ---- code injection primitives ----------------------------------
         mem.set(
             "alloc",
@@ -476,15 +545,14 @@ fn register_host(ctx: &Context) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
 
-        // The process's first thread. For Unreal that is the game thread, the
-        // only one allowed to touch UObjects - code caves compare against it.
+        // The thread the process started on. For Unreal that is the game
+        // thread, the only one allowed to touch UObjects - code caves compare
+        // against it. Chosen by creation time, because thread enumeration
+        // order drifts once a game has been running a while.
         mem.set(
             "mainThreadId",
             Function::new(ctx.clone(), || -> f64 {
-                with_target(
-                    |t| crate::finder::thread_ids(t.proc.pid).first().copied().unwrap_or(0) as f64,
-                    0.0,
-                )
+                with_target(|t| crate::finder::main_thread_id(t.proc.pid) as f64, 0.0)
             })
             .map_err(|e| e.to_string())?,
         )

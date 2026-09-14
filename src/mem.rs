@@ -374,6 +374,122 @@ impl Proc {
         }
     }
 
+    /// The committed region `addr` falls in: base, size, protection, type.
+    ///
+    /// A signature can match bytes that are never executed - a packed game
+    /// carries plenty of code-shaped data - and hooking those installs
+    /// cleanly and then does nothing. Checking the page is executable first
+    /// turns that silent failure into an answer.
+    pub fn region_of(&self, addr: u64) -> Option<(u64, usize, u32, u32)> {
+        let mut mbi = MEMORY_BASIC_INFORMATION::default();
+        let n = unsafe {
+            VirtualQueryEx(
+                self.handle,
+                Some(addr as *const c_void),
+                &mut mbi,
+                std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            )
+        };
+        if n == 0 {
+            return None;
+        }
+        Some((mbi.BaseAddress as u64, mbi.RegionSize, mbi.Protect.0, mbi.Type.0))
+    }
+
+    /// Every float in writable private memory that falls by roughly the wall
+    /// time between two reads - which is what a countdown does and almost
+    /// nothing else does.
+    ///
+    /// Matching candidates are kept per region as indices plus values rather
+    /// than as a flat list of pairs; at tens of millions of candidates that is
+    /// the difference between fitting in memory and not.
+    pub fn find_falling(&self, lo: f32, hi: f32, ms: u64, limit: usize) -> Vec<(u64, f32, f32)> {
+        struct Snap {
+            base: u64,
+            size: usize,
+            idx: Vec<u32>,
+            val: Vec<f32>,
+        }
+
+        let mut snaps: Vec<Snap> = Vec::new();
+        let mut total = 0usize;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut addr: u64 = 0;
+
+        while addr < (1u64 << 47) && total < limit {
+            let mut mbi = MEMORY_BASIC_INFORMATION::default();
+            let n = unsafe {
+                VirtualQueryEx(
+                    self.handle,
+                    Some(addr as *const c_void),
+                    &mut mbi,
+                    std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                )
+            };
+            if n == 0 {
+                break;
+            }
+            let rbase = mbi.BaseAddress as u64;
+            let rsize = mbi.RegionSize;
+            let prot = mbi.Protect;
+            let writable = (prot.0 & 0x04) != 0 || (prot.0 & 0x40) != 0;
+            let usable = mbi.State == MEM_COMMIT
+                && mbi.Type.0 == 0x20000 // MEM_PRIVATE
+                && writable
+                && (prot & PAGE_GUARD).0 == 0
+                && rsize >= 0x1000
+                && rsize <= 256 * 1024 * 1024;
+
+            if usable {
+                buf.resize(rsize, 0);
+                if self.read(rbase, &mut buf[..rsize]) {
+                    let mut idx = Vec::new();
+                    let mut val = Vec::new();
+                    for i in 0..rsize / 4 {
+                        let o = i * 4;
+                        let v = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                        if v >= lo && v <= hi {
+                            idx.push(i as u32);
+                            val.push(v);
+                        }
+                    }
+                    if !idx.is_empty() {
+                        total += idx.len();
+                        snaps.push(Snap { base: rbase, size: rsize, idx, val });
+                    }
+                }
+            }
+            if rsize == 0 {
+                break;
+            }
+            addr = rbase.wrapping_add(rsize as u64);
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+        let secs = ms as f32 / 1000.0;
+
+        let mut out = Vec::new();
+        for s in &snaps {
+            buf.resize(s.size, 0);
+            if !self.read(s.base, &mut buf[..s.size]) {
+                continue;
+            }
+            for (k, &i) in s.idx.iter().enumerate() {
+                let o = i as usize * 4;
+                if o + 4 > s.size {
+                    continue;
+                }
+                let now = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                let was = s.val[k];
+                let drop = was - now;
+                if now >= 0.0 && drop > secs * 0.6 && drop < secs * 1.6 {
+                    out.push((s.base + o as u64, was, now));
+                }
+            }
+        }
+        out
+    }
+
     pub fn read_bytes(&self, addr: u64, n: usize) -> Option<Vec<u8>> {
         let mut buf = vec![0u8; n];
         self.read(addr, &mut buf).then_some(buf)

@@ -289,7 +289,10 @@ export const options = [
                     },
                 };
             });
-            if (applied) noHitActor?.setGuard(UE.pawn());
+            // the settled pawn, not the raw one: a load frees the old pawn and
+            // hands its address to something else, and the cave would then be
+            // comparing against whatever moved in
+            if (applied) noHitActor?.setGuard(pawn());
         },
     },
     { separator: true },
@@ -301,11 +304,18 @@ export const options = [
             // gone the player would run several times too fast, so the
             // original code is put back while Haste is active. Finishers
             // never touch the pawn's dilation.
+            //
+            // It also comes out while the world is loading. The factor this
+            // drops is the game's own, and a load is exactly when the game
+            // leans on it to hold the world still - so leaving the patch in
+            // lets everything keep ticking through a level load instead of
+            // waiting for it. The settled pawn is 0 until the world is up.
+            const loaded = pawn();
             const p = UE.pawn();
             const hasted = p ? mem.f32(p + TIME_DILATION) / speedMult > 1.05 : false;
             OPT.whileFound(
                 'slowmo',
-                on && !hasted,
+                on && !!loaded && !hasted,
                 () => SCAN.once(EFFECTIVE_DILATION_SIG),
                 (at) => HOOK.patch(at, withoutGameSlowmo(at)),
             );

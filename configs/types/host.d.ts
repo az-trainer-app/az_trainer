@@ -48,13 +48,28 @@ interface Mem {
      * const gworld = mem.rip(hit, 3, 7);
      */
     rip(hit: Address, operandOffset: number, instructionLength: number): Address;
+    /**
+     * `[base, size, protect, type]` for the committed region `addr` lies in,
+     * or `[]` if it is not committed.
+     *
+     * A signature can match bytes that are never executed - a packed game
+     * carries plenty of code-shaped data - and a hook placed there installs
+     * cleanly and then never fires. Test `protect & 0xF0` before hooking a
+     * site found by signature alone.
+     */
+    region(addr: Address): number[];
     /** Load address of the game's main module. */
     moduleBase(): Address;
     /** Size of the main module in bytes. */
     moduleSize(): number;
     /**
-     * Id of the process's first thread - Unreal's game thread. A cave that
-     * calls game functions should check `gs:[48]` against it. 0 if unknown.
+     * Id of the thread the process started on - Unreal's game thread. A cave
+     * that calls game functions should check `gs:[48]` against it. 0 if
+     * unknown.
+     *
+     * Picked by thread creation time, not enumeration order: the latter
+     * drifts as a game retires and creates workers, so attaching to a game
+     * that has been running a while could otherwise name a worker thread.
      */
     mainThreadId(): number;
 

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod art;
+#[cfg(feature = "devtools")]
+mod devtools;
 mod engine;
 mod finder;
 mod hold;
@@ -144,6 +146,31 @@ impl Trainer {
             config_url: None,
             hint: None,
         };
+        // Closing the window ends the process without dropping Trainer, so
+        // Drop for Engine never runs and every patch the config installed
+        // stays in the game. Shut the engine down while the entity is still
+        // alive, which restores them and detaches.
+        // Both, because closing the last window and quitting the app do not
+        // reliably run the same path, and a missed shutdown leaves the game
+        // patched. shutdown() is idempotent, so running twice is harmless.
+        let closed = cx.weak_entity();
+        cx.on_window_closed(move |cx| {
+            eprintln!("[app] window closed - shutting the engine down");
+            if let Some(t) = closed.upgrade() {
+                t.update(cx, |t, _| t.engine.shutdown());
+            }
+        })
+        .detach();
+
+        // Context's own on_app_quit hands the entity straight back, so this
+        // one needs no handle of its own.
+        cx.on_app_quit(|t: &mut Trainer, _cx| {
+            eprintln!("[app] quitting - shutting the engine down");
+            t.engine.shutdown();
+            async {}
+        })
+        .detach();
+
         update::start(t.updates.clone());
         t.pull();
         t

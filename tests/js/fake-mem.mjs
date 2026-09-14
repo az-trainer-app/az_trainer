@@ -13,6 +13,9 @@ export const SIZE = 0x4000000;
  * @param {object} [opts]
  * @param {(sig: string) => number} [opts.aob] address for a signature; default: not found
  * @param {(sig: string) => number[]} [opts.aobAll]
+ * @param {(size: number, near: number) => number} [opts.alloc] where a cave
+ *   lands; default: within rel32 range. Return something far away to exercise
+ *   the absolute-jump fallback, or 0 to refuse.
  */
 export function createMem(opts = {}) {
     /** @type {Map<number, number>} */
@@ -61,9 +64,14 @@ export function createMem(opts = {}) {
         moduleBase: () => BASE,
         moduleSize: () => SIZE,
         alloc(size, near) {
-            const cave = nextCave;
-            nextCave += 0x10000;
-            allocs.push({ cave, size, near });
+            let cave;
+            if (opts.alloc) {
+                cave = opts.alloc(size, near);
+            } else {
+                cave = nextCave;
+                nextCave += 0x10000;
+            }
+            if (cave) allocs.push({ cave, size, near });
             return cave;
         },
         free(a) {

@@ -442,6 +442,9 @@ fn run(shared: Arc<Mutex<Shared>>, quit: Arc<AtomicBool>) {
                 }
             }
 
+            #[cfg(feature = "devtools")]
+            crate::devtools::poll(&script);
+
             let levels: Vec<usize> = shared.lock().map(|s| s.level.clone()).unwrap_or_default();
             if levels != saved_levels {
                 // one-shots are never saved, like separators

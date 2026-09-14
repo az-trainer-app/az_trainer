@@ -1,7 +1,13 @@
 [package]
 name = "az_trainer"
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
+
+[features]
+# A live JS channel into the attached game, for research. Off by default: a
+# released build must not carry the ability to evaluate arbitrary code against
+# another process, which would make a signed binary a general memory reader.
+devtools = []
 
 [dependencies]
 gpui = "0.2"

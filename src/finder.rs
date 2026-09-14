@@ -23,8 +23,10 @@ use windows::Win32::System::Diagnostics::Debug::{
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
 };
+use windows::Win32::Foundation::FILETIME;
 use windows::Win32::System::Threading::{
-    OpenThread, ResumeThread, SuspendThread, THREAD_ALL_ACCESS,
+    GetThreadTimes, OpenThread, ResumeThread, SuspendThread, THREAD_ALL_ACCESS,
+    THREAD_QUERY_LIMITED_INFORMATION,
 };
 
 use crate::mem::Proc;
@@ -73,6 +75,46 @@ pub(crate) fn thread_ids(pid: u32) -> Vec<u32> {
         let _ = CloseHandle(snap);
     }
     out
+}
+
+/// The process's main thread: the one created first.
+///
+/// Toolhelp returns threads in whatever order its snapshot holds them, not in
+/// creation order, and that order drifts as a game creates and retires
+/// workers. So taking the first entry only agrees with the game thread while
+/// the process is young - attach to a game that has been running a while and
+/// it can name a worker instead. A cave that guards on the result would then
+/// run its body off the game thread, and anything touching UObjects there
+/// deadlocks against the game thread on the next load.
+///
+/// Creation time does not drift, so ask for that instead.
+pub(crate) fn main_thread_id(pid: u32) -> u32 {
+    let mut best: Option<(u64, u32)> = None;
+    for id in thread_ids(pid) {
+        let created = unsafe {
+            let Ok(h) = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, id) else {
+                continue;
+            };
+            let mut create = FILETIME::default();
+            let mut exit = FILETIME::default();
+            let mut kernel = FILETIME::default();
+            let mut user = FILETIME::default();
+            let ok =
+                GetThreadTimes(h, &mut create, &mut exit, &mut kernel, &mut user).is_ok();
+            let _ = CloseHandle(h);
+            if !ok {
+                continue;
+            }
+            ((create.dwHighDateTime as u64) << 32) | create.dwLowDateTime as u64
+        };
+        if best.is_none_or(|(t, _)| created < t) {
+            best = Some((created, id));
+        }
+    }
+    // Nothing queryable: fall back to the old guess rather than returning 0,
+    // which would disarm every cave that checks the thread.
+    best.map(|(_, id)| id)
+        .unwrap_or_else(|| thread_ids(pid).first().copied().unwrap_or(0))
 }
 
 /// DR7 for one active breakpoint in slot 0.
