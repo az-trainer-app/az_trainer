@@ -1,6 +1,6 @@
 [package]
 name = "az_trainer"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,8 @@ ureq = "2"
 serde_json = "1"
 sha2 = "0.10"
 sha1_smol = "1"
+# fit game artwork to the banner (already in the tree via gpui)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 
 [target.'cfg(windows)'.dependencies.windows]

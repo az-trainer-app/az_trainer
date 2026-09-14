@@ -478,10 +478,11 @@ dependencies = [
 
 [[package]]
 name = "az_trainer"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "embed-resource",
  "gpui",
+ "image",
  "rquickjs",
  "serde_json",
  "sha1_smol",
