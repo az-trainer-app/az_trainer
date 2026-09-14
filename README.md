@@ -10,9 +10,9 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 | :---: | :---: |
 | ![AZ Trainer attached to Onimusha: Way of the Sword](docs/onimusha.png) | ![AZ Trainer attached to Black Myth: Wukong](docs/wukong.png) |
 
-| Resonance: A Plague Tale Legacy | |
+| Resonance: A Plague Tale Legacy | A Plague Tale: Innocence |
 | :---: | :---: |
-| ![AZ Trainer attached to Resonance: A Plague Tale Legacy](docs/resonance.png) | |
+| ![AZ Trainer attached to Resonance: A Plague Tale Legacy](docs/resonance.png) | ![AZ Trainer attached to A Plague Tale: Innocence](docs/innocence.png) |
 
 ## Features
 
