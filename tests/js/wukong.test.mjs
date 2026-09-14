@@ -170,6 +170,20 @@ test('an object that is only nearly right is not taken for the attributes', asyn
     assert.equal(fake.mem.f32(slot(ATTRS_OBJ, HP)), 100, 'left alone');
 });
 
+test("a transformation's attributes, which recover no stamina, are still the player's", async () => {
+    const fake = game();
+    const cfg = await load();
+    const health = byName(cfg.options, 'Infinite Health');
+    health.tick({ on: true, mult: 1 });
+
+    attributesAt(fake, ATTRS_OBJ, { hp: 200, hpMax: 436 });
+    fake.poke(slot(ATTRS_OBJ, STAMINA_RECOVER), f32(0));
+    recordCall(fake, caveOf(fake));
+    health.tick({ on: true, mult: 1 });
+
+    assert.equal(fake.mem.f32(slot(ATTRS_OBJ, HP)), 999999, 'transformed health flooded');
+});
+
 test('a bar already full is not rewritten every tick', async () => {
     const fake = game();
     const cfg = await load();

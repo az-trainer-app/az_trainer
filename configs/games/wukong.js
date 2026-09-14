@@ -344,7 +344,8 @@ function isAttributes(p) {
     };
     if (!span(HP_MAX, 10, 1e6) || !span(STAMINA_MAX, 10, 1e6) || !span(MP_MAX, 1, 1e6)) return false;
     if (!span(HP_MAX_BASE, 10, 1e6) || !span(STAMINA_MAX_BASE, 10, 1e6)) return false;
-    if (!span(ATK, 1, 1e6) || !span(DEF, 0, 1e6) || !span(STAMINA_RECOVER, 1, 1e6)) return false;
+    // stamina recovery reads 0 in a transformation's own attribute object
+    if (!span(ATK, 1, 1e6) || !span(DEF, 0, 1e6) || !span(STAMINA_RECOVER, 0, 1e6)) return false;
     return attr(p, HP) >= 0 && attr(p, STAMINA) >= 0 && attr(p, MP) >= 0;
 }
 
