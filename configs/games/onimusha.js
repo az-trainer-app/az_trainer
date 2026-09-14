@@ -37,6 +37,19 @@ const STAMINA_CUR = 0x38;
 const ONI_MAX = 0x128;
 const ONI_CUR = 0x124;
 
+// Red Souls is stored as a fraction: total = numerator / denominator, both
+// qwords, at the resolved address and +8. (The visible count is a cache the
+// game recomputes, so only this store sticks.) To set N: numerator = N * den.
+const RED_PATHS = [
+    { rva: 0xcbd3ed8, offsets: [0x50, 0x1e0] },
+    { rva: 0xcbd3ee0, offsets: [0x50, 0x1e0] },
+    { rva: 0xcbc16c8, offsets: [0xb0, 0x1a0] },
+    { rva: 0xcbc16d0, offsets: [0xb0, 0x1a0] },
+    { rva: 0xcbb48e0, offsets: [0x160, 0x1e0] },
+    { rva: 0xcbb48e8, offsets: [0x160, 0x1e0] },
+    { rva: 0xcbd3ed8, offsets: [0x50, 0x10, 0x1c0] },
+];
+
 /** Resolve a static path: `[[exe+rva]+o0]+o1...`, dereferencing all but the last. */
 function resolve(path) {
     let p = mem.u64(mem.moduleBase() + path.rva);
@@ -104,6 +117,21 @@ function holdAtMax(obj, maxOff, curOff) {
     if (mem.i32(obj + curOff) < max) mem.writeBytes(obj + curOff, HOOK.i32(max));
 }
 
+/** The red-soul fraction store: `{ numAddr, den }`, or null. */
+function redFraction() {
+    for (const path of RED_PATHS) {
+        const a = resolve(path);
+        if (!a) continue;
+        const den = mem.u64(a + 0x8);
+        const num = mem.u64(a);
+        if (den > 0 && den < 1e9 && num % den === 0) {
+            const total = num / den;
+            if (total > 0 && total < 1e8) return { numAddr: a, den };
+        }
+    }
+    return null;
+}
+
 /** In-world once the player resolves. */
 export function live() {
     return character() !== 0;
@@ -135,6 +163,21 @@ export const options = [
             const c = on ? character() : 0;
             const s = c && statObject(c, ONI_CHAIN, ONI_MAX, ONI_CUR);
             if (s) holdAtMax(s, ONI_MAX, ONI_CUR);
+        },
+    },
+    { separator: true },
+    {
+        // Sets Red Souls once per click, then switches off - like Denarius.
+        // Writes numerator = amount * denominator into the fraction store.
+        name: 'Red Souls',
+        levels: [10000, 99000, 999000],
+        labels: ['10k', '99k', '999k'],
+        once: true,
+        tick({ on, mult }) {
+            if (!on) return;
+            const r = redFraction();
+            if (!r) return false; // not resolved yet - retry next tick
+            return mem.writeBytes(r.numAddr, HOOK.u64(mult * r.den));
         },
     },
 ];
