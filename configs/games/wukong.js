@@ -514,8 +514,12 @@ function infinite(name, cur, max, over = 0) {
  */
 const FLOOD = 999999;
 
-/** An option that floods one bar so it never visibly moves. */
-function flooded(name, cur) {
+/**
+ * An option that floods one bar so it never visibly moves.
+ *
+ * @param {(attrs: number) => void} [also] more to hold on the same object
+ */
+function flooded(name, cur, also) {
     return {
         name,
         tick({ on }) {
@@ -524,8 +528,25 @@ function flooded(name, cur) {
             syncRecorder();
             const a = on && attributes();
             if (a && attr(a, cur) < FLOOD) mem.writeF32(slot(a, cur), FLOOD);
+            if (a && also) also(a);
         },
     };
+}
+
+// A transformation has its own attribute object, which recovers no stamina,
+// and the bar its form shows - drained by hits and dodge rolls, the form
+// ending once it is empty - is this entry rather than STAMINA. Its maximum
+// was not found, so the highest value seen in the current form is held
+// instead of inventing one. Outside a transformation the entry is left alone.
+const FORM_STAMINA = 188;
+let formPeak = { attrs: 0, value: 0 };
+
+/** Keep a transformation's stamina bar from going down. */
+function holdFormStamina(attrs) {
+    if (attr(attrs, STAMINA_RECOVER) !== 0) return;
+    const v = attr(attrs, FORM_STAMINA);
+    if (formPeak.attrs !== attrs || v > formPeak.value) formPeak = { attrs, value: v };
+    else if (v < formPeak.value) mem.writeF32(slot(attrs, FORM_STAMINA), formPeak.value);
 }
 
 /** @type {import('../types/trainer').Entry[]} */
@@ -533,7 +554,7 @@ export const options = [
     { separator: 'Survival' },
     flooded('Infinite Health', HP),
     infinite('Infinite Mana', MP, MP_MAX),
-    flooded('Infinite Stamina', STAMINA),
+    flooded('Infinite Stamina', STAMINA, holdFormStamina),
     { separator: 'Combat' },
     infinite('Infinite Focus', FOCUS, FOCUS_MAX, 1),
     infinite('Infinite Spirit Energy', SPIRIT, SPIRIT_MAX),

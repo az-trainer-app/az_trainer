@@ -184,6 +184,30 @@ test("a transformation's attributes, which recover no stamina, are still the pla
     assert.equal(fake.mem.f32(slot(ATTRS_OBJ, HP)), 999999, 'transformed health flooded');
 });
 
+test("a transformation's own stamina bar is held where it was, and a normal form's entry left alone", async () => {
+    const FORM_STAMINA = 188;
+    const fake = game();
+    const cfg = await load();
+    const stamina = byName(cfg.options, 'Infinite Stamina');
+    stamina.tick({ on: true, mult: 1 });
+
+    attributesAt(fake, ATTRS_OBJ, { hpMax: 436 });
+    fake.poke(slot(ATTRS_OBJ, STAMINA_RECOVER), f32(0)); // a transformation
+    fake.poke(slot(ATTRS_OBJ, FORM_STAMINA), f32(80));
+    recordCall(fake, caveOf(fake));
+    stamina.tick({ on: true, mult: 1 });
+    fake.poke(slot(ATTRS_OBJ, FORM_STAMINA), f32(55)); // a dodge roll
+    stamina.tick({ on: true, mult: 1 });
+    assert.equal(fake.mem.f32(slot(ATTRS_OBJ, FORM_STAMINA)), 80, 'put back');
+
+    fake.poke(slot(ATTRS_OBJ, STAMINA_RECOVER), f32(50)); // normal form
+    fake.poke(slot(ATTRS_OBJ, FORM_STAMINA), f32(120));
+    stamina.tick({ on: true, mult: 1 });
+    fake.poke(slot(ATTRS_OBJ, FORM_STAMINA), f32(100));
+    stamina.tick({ on: true, mult: 1 });
+    assert.equal(fake.mem.f32(slot(ATTRS_OBJ, FORM_STAMINA)), 100, 'normal form untouched');
+});
+
 test('a bar already full is not rewritten every tick', async () => {
     const fake = game();
     const cfg = await load();
