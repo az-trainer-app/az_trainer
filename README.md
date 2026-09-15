@@ -37,6 +37,8 @@ For single-player games only. Not intended for online or competitive play.
 3. Enable the options you want, from the window or with their shortcuts.
 4. Close the trainer when you are done. Every change is reverted.
 
+> **Windows SmartScreen warning.** On first launch Windows may report that *Microsoft Defender SmartScreen prevented an unrecognized app from starting*. AZ Trainer is not code-signed, so new releases have not yet built up download reputation. Select **More info**, then **Run anyway**. To confirm the file is genuine, compare the output of `Get-FileHash az_trainer.exe` with `az_trainer.exe.sha256` on the release page.
+
 ## Adding games
 
 Each game is a single JavaScript file. See [docs/DEVELOPING.md](docs/DEVELOPING.md).
