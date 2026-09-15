@@ -348,7 +348,7 @@ export const options = [
         // stays armed into a save load. The cave does the work the next time
         // the game thread runs the inventory function (open the inventory, or
         // pick something up), by calling AddCurrency with the difference.
-        name: 'Denarius',
+        name: 'Denarii',
         // the game caps Denarius at 99,999
         levels: [1000, 10000, 99999],
         labels: ['1k', '10k', '99k'],
