@@ -2,13 +2,13 @@
 
 A small, fast game trainer for Windows. Start it, start your game, click what you want.
 
-**Website:** https://az-trainer-app.github.io/az_trainer/
+**Website:** https://az-trainer-app.github.io
 
 <p align="center"><img src="docs/dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker"></p>
 
 ## Supported games
 
-Newest first. Screenshots of every trainer are on the [website](https://az-trainer-app.github.io/az_trainer/).
+Newest first. Screenshots of every trainer are on the [website](https://az-trainer-app.github.io).
 
 - Onimusha: Way of the Sword
 - The Blood of Dawnwalker
