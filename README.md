@@ -4,42 +4,19 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 
 **Website:** https://az-trainer-app.github.io/az_trainer/
 
+<p align="center"><img src="docs/dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker"></p>
+
 ## Supported games
 
-<details open>
-<summary><b>The Blood of Dawnwalker</b></summary>
-<p align="center"><img src="docs/dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker"></p>
-</details>
+Newest first. Screenshots of every trainer are on the [website](https://az-trainer-app.github.io/az_trainer/).
 
-<details>
-<summary><b>Dragon Age: The Veilguard</b></summary>
-<p align="center"><img src="docs/veilguard.png" alt="AZ Trainer attached to Dragon Age: The Veilguard"></p>
-</details>
-
-<details>
-<summary><b>Onimusha: Way of the Sword</b></summary>
-<p align="center"><img src="docs/onimusha.png" alt="AZ Trainer attached to Onimusha: Way of the Sword"></p>
-</details>
-
-<details>
-<summary><b>Black Myth: Wukong</b></summary>
-<p align="center"><img src="docs/wukong.png" alt="AZ Trainer attached to Black Myth: Wukong"></p>
-</details>
-
-<details>
-<summary><b>Resonance: A Plague Tale Legacy</b></summary>
-<p align="center"><img src="docs/resonance.png" alt="AZ Trainer attached to Resonance: A Plague Tale Legacy"></p>
-</details>
-
-<details>
-<summary><b>A Plague Tale: Innocence</b></summary>
-<p align="center"><img src="docs/innocence.png" alt="AZ Trainer attached to A Plague Tale: Innocence"></p>
-</details>
-
-<details>
-<summary><b>A Plague Tale: Requiem</b></summary>
-<p align="center"><img src="docs/requiem.png" alt="AZ Trainer attached to A Plague Tale: Requiem"></p>
-</details>
+- Onimusha: Way of the Sword
+- The Blood of Dawnwalker
+- Resonance: A Plague Tale Legacy
+- Dragon Age: The Veilguard
+- Black Myth: Wukong
+- A Plague Tale: Requiem
+- A Plague Tale: Innocence
 
 ## Features
 

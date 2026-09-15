@@ -7,7 +7,7 @@
 <meta name="description" content="A small, fast game trainer for Windows. Start it, start your game, click what you want.">
 <meta property="og:title" content="AZ Trainer">
 <meta property="og:description" content="A small, fast game trainer for Windows. Start it, start your game, click what you want.">
-<meta property="og:image" content="https://az-trainer-app.github.io/az_trainer/wukong.png">
+<meta property="og:image" content="https://az-trainer-app.github.io/az_trainer/dawnwalker.png">
 <link rel="icon" href="favicon.ico">
 <style>
   :root {
@@ -198,8 +198,8 @@
         <div class="meta">Windows 10/11 · one exe, no installer · single-player games only</div>
       </div>
       <div class="shot-hero">
-        <div class="live" data-game="wukong" data-title="Black Myth: Wukong">
-          <img src="wukong.png" alt="AZ Trainer attached to Black Myth: Wukong" width="527" height="642">
+        <div class="live" data-game="dawnwalker" data-title="The Blood of Dawnwalker">
+          <img src="dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker" width="527" height="599">
         </div>
       </div>
     </div>
@@ -493,17 +493,18 @@
     })(performance.now());
   }
 
-  liveBanner(document.querySelector('.shot-hero .live')).set('wukong', 'Black Myth: Wukong');
+  liveBanner(document.querySelector('.shot-hero .live')).set('dawnwalker', 'The Blood of Dawnwalker');
 
   // ---- screenshot carousel -------------------------------------------------
+  // newest game first, by Steam release date
   const GAMES = [
-    { id: 'dawnwalker', title: 'The Blood of Dawnwalker', h: 599 },
-    { id: 'veilguard', title: 'Dragon Age: The Veilguard', h: 599 },
-    { id: 'onimusha', title: 'Onimusha: Way of the Sword', h: 507 },
-    { id: 'wukong', title: 'Black Myth: Wukong', h: 642 },
-    { id: 'resonance', title: 'Resonance: A Plague Tale Legacy', h: 317 },
-    { id: 'innocence', title: 'A Plague Tale: Innocence', h: 274 },
-    { id: 'requiem', title: 'A Plague Tale: Requiem', h: 274 },
+    { id: 'onimusha', title: 'Onimusha: Way of the Sword', h: 507 },       // Sep 3, 2026
+    { id: 'dawnwalker', title: 'The Blood of Dawnwalker', h: 599 },        // Sep 2, 2026
+    { id: 'resonance', title: 'Resonance: A Plague Tale Legacy', h: 317 }, // Aug 27, 2026
+    { id: 'veilguard', title: 'Dragon Age: The Veilguard', h: 599 },       // Oct 31, 2024
+    { id: 'wukong', title: 'Black Myth: Wukong', h: 642 },                 // Aug 19, 2024
+    { id: 'requiem', title: 'A Plague Tale: Requiem', h: 274 },            // Oct 17, 2022
+    { id: 'innocence', title: 'A Plague Tale: Innocence', h: 274 },        // May 14, 2019
   ];
   const AUTOPLAY_MS = 8000;
 
