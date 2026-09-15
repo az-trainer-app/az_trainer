@@ -14,6 +14,10 @@ A small, fast game trainer for Windows. Start it, start your game, click what yo
 | :---: | :---: |
 | ![AZ Trainer attached to Resonance: A Plague Tale Legacy](docs/resonance.png) | ![AZ Trainer attached to A Plague Tale: Innocence](docs/innocence.png) |
 
+| A Plague Tale: Requiem | |
+| :---: | :---: |
+| ![AZ Trainer attached to A Plague Tale: Requiem](docs/requiem.png) | |
+
 ## Features
 
 - Detects the running game automatically, and its version: a script never touches a build it was not made for
