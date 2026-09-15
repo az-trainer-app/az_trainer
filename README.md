@@ -1,6 +1,6 @@
 # AZ Trainer
 
-A small, fast game trainer for Windows. Start it, start your game, click what you want.
+A lightweight trainer for single-player PC games on Windows. AZ Trainer detects the game you are playing, applies the options you choose, and restores everything when you close it.
 
 **Open Source. No Ads, No Spyware, No Viruses.**
 
@@ -22,20 +22,20 @@ Newest first. Screenshots of every trainer are on the [website](https://az-train
 
 ## Features
 
-- Detects the running game automatically, and its version: a script never touches a build it was not made for
-- Remembers your settings per game
-- Keyboard shortcuts (e.g. Alt+F1-F3 for speed), with a brief on-screen notice in game
-- Updates itself, including new games and fixes
-- Shows which script is loaded: its update date, checksum and a link to its source
+- **Version-aware detection:** recognises the running game and its exact build, and never modifies a version a script was not written for
+- **Global shortcuts:** toggle options with hotkeys such as Alt+F1, confirmed by a brief on-screen notice in game
+- **Automatic updates:** new releases, newly supported games and fixes are installed in the background
+- **Saved preferences:** your selections are remembered for each game
+- **Full transparency:** the active script's update date, checksum and source are shown in the trainer window
 
-Single-player only. Do not use with online or competitive games.
+For single-player games only. Not intended for online or competitive play.
 
 ## Usage
 
-1. Download `az_trainer.exe` from the [latest release](../../releases/latest) and put it in a folder of its own.
-2. Run it and start the game. On first start it downloads the game scripts next to itself.
-3. Click the options you want.
-4. Close the trainer with **X** when done.
+1. Download `az_trainer.exe` from the [latest release](../../releases/latest) and save it to a folder of its own.
+2. Run it and launch your game. On first launch it retrieves the latest game scripts.
+3. Enable the options you want, from the window or with their shortcuts.
+4. Close the trainer when you are done. Every change is reverted.
 
 ## Adding games
 
