@@ -2,6 +2,7 @@
 name = "az_trainer"
 version = "1.5.1"
 edition = "2021"
+license = "MIT"
 
 [features]
 # A live JS channel into the attached game, for research. Off by default: a

@@ -2,6 +2,8 @@
 
 A small, fast game trainer for Windows. Start it, start your game, click what you want.
 
+**Open Source. No Ads, No Spyware, No Viruses.**
+
 **Website:** https://az-trainer-app.github.io
 
 <p align="center"><img src="docs/dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker"></p>
@@ -38,3 +40,7 @@ Single-player only. Do not use with online or competitive games.
 ## Adding games
 
 Each game is a single JavaScript file. See [docs/DEVELOPING.md](docs/DEVELOPING.md).
+
+## License
+
+[MIT](LICENSE)
