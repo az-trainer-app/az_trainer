@@ -95,35 +95,37 @@
   h2 { font-size: clamp(26px, 3.4vw, 34px); margin: 0 0 10px; letter-spacing: -.4px; }
   .sub { color: var(--dim); margin: 0 0 32px; max-width: 60ch; }
 
-  /* ---- games tabs ------------------------------------------------------ */
-  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
-  .tab {
-    font: inherit; font-size: 14px; color: var(--dim); background: var(--panel); border: 1px solid var(--line);
-    padding: 8px 14px; border-radius: 999px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+  /* ---- screenshot carousel ------------------------------------------- */
+  .carousel { position: relative; outline: none; }
+  .viewport {
+    overflow: hidden; padding-block: 12px 28px; touch-action: pan-y;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
   }
-  .tab:hover { color: var(--text); border-color: var(--dim); }
-  .tab[aria-selected="true"] { color: #fff; background: var(--accent); border-color: var(--accent); }
-  .tab:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
-  .game {
-    position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--panel); display: grid; grid-template-columns: auto 1fr; gap: 36px; padding: 32px;
+  .track { display: flex; align-items: center; gap: 40px; transition: transform .55s cubic-bezier(.22, .7, .2, 1); will-change: transform; }
+  .slide {
+    flex: 0 0 auto; width: min(420px, 76vw); opacity: .3; transform: scale(.86); filter: saturate(.4);
+    transition: opacity .45s, transform .45s, filter .45s; cursor: pointer; user-select: none;
   }
-  .game .art { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .16; filter: blur(18px) saturate(1.2); transform: scale(1.15); pointer-events: none; transition: background-image .2s; }
-  .game > * { position: relative; }
-  .game .live { filter: drop-shadow(0 18px 40px rgba(0,0,0,.5)); }
-  @media (max-width: 860px) { .game { grid-template-columns: 1fr; padding: 20px; gap: 24px; } .game .live { margin-inline: auto; } }
-  .game h3 { font-size: 24px; margin: 4px 0 18px; }
-  .opts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-  .opts li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
-  .opts li.group { border: 0; padding: 18px 0 4px; color: var(--dim); font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; }
-  .opts li.group:first-child { padding-top: 0; }
-  .opts li.rule { border: 0; padding: 8px 0 0; }
-  .pills { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-  .pill, kbd {
-    font: 12px/1 "Segoe UI", system-ui, sans-serif; padding: 5px 8px; border-radius: 6px;
-    background: var(--panel-2); border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  .slide.active { opacity: 1; transform: none; filter: none; cursor: default; }
+  .slide .live { width: 100%; filter: drop-shadow(0 22px 44px rgba(0, 0, 0, .55)); }
+  .slide img { -webkit-user-drag: none; }
+  .nav {
+    position: absolute; top: calc(50% - 44px); z-index: 2; width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center; cursor: pointer; color: var(--text);
+    background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--line);
+    transition: border-color .15s, background .15s;
   }
-  kbd { color: var(--text); border-bottom-width: 2px; }
+  .nav:hover { border-color: var(--dim); background: var(--panel-2); }
+  .nav.prev { left: 0; }
+  .nav.next { right: 0; }
+  .nav svg { width: 20px; height: 20px; }
+  .caption { text-align: center; font-weight: 600; font-size: 18px; min-height: 1.6em; }
+  .dots { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
+  .dot { width: 8px; height: 8px; padding: 0; border: 0; border-radius: 999px; background: var(--line); cursor: pointer; transition: width .25s, background .25s; }
+  .dot:hover { background: var(--dim); }
+  .dot[aria-current="true"] { width: 26px; background: var(--accent); }
+  .nav:focus-visible, .dot:focus-visible, .carousel:focus-visible .slide.active { outline: 2px solid var(--accent-hi); outline-offset: 3px; }
 
   /* ---- steps & features ------------------------------------------------ */
   .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
@@ -155,20 +157,6 @@
     font-size: calc(20 * 100cqw / 420); line-height: 1.4; font-weight: 600; color: #fff; white-space: nowrap;
     text-shadow: calc(100cqw / 420) calc(100cqw / 420) 0 rgba(0, 0, 0, .75);
   }
-
-  /* ---- shortcut tooltips ----------------------------------------------- */
-  [data-tip] { position: relative; cursor: default; }
-  [data-tip]::after {
-    content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px);
-    transform: translate(-50%, 4px); opacity: 0; pointer-events: none; z-index: 5;
-    font: 600 12px/1 "Segoe UI", system-ui, sans-serif; color: var(--text); white-space: nowrap;
-    background: #0b0d12; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 6px 8px;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, .45); transition: opacity .12s, transform .12s;
-  }
-  [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
-  [data-tip]:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
-  .pill[data-tip]:hover { color: var(--text); border-color: var(--dim); }
-  .keyed { border-bottom: 1px dotted var(--dim); }
 
   footer { border-top: 1px solid var(--line); padding-block: 32px; color: var(--dim); font-size: 14px; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
@@ -221,14 +209,12 @@
     <div class="wrap">
       <h2>Supported games</h2>
       <p class="sub">Each game is a small script. New games and fixes arrive on their own &mdash; the trainer syncs its scripts from GitHub.</p>
-      <div class="tabs" role="tablist" aria-label="Games"></div>
-      <div class="game" role="tabpanel" id="game-panel" tabindex="0">
-        <div class="art" aria-hidden="true"></div>
-        <div class="live" id="game-live"><img class="shot" alt="" width="527" height="599"></div>
-        <div>
-          <h3></h3>
-          <ul class="opts"></ul>
-        </div>
+      <div class="carousel" aria-roledescription="carousel" aria-label="Trainer screenshots" tabindex="0">
+        <button class="nav prev" type="button" aria-label="Previous game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
+        <div class="viewport"><div class="track"></div></div>
+        <button class="nav next" type="button" aria-label="Next game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button>
+        <div class="caption" aria-live="polite"></div>
+        <div class="dots"></div>
       </div>
     </div>
   </section>
@@ -287,37 +273,6 @@
 </footer>
 
 <script>
-  // Each game's options, as its script declares them: `null` is a plain
-  // divider, a string a titled one.
-  const GAMES = [
-    { id: 'dawnwalker', title: 'The Blood of Dawnwalker', h: 599, options: [
-      'Survival', ['Infinite Human Health'], ['Infinite Vampiric Blood'], ['Infinite Stamina'], ['No Hit Reaction'],
-      null, ['No Slow-Motion Finishers'], ['Speed', ['2x', '4x', '8x'], ['Alt+F1', 'Alt+F2', 'Alt+F3']], ['Denarii', ['1k', '10k', '99k']],
-    ] },
-    { id: 'veilguard', title: 'Dragon Age: The Veilguard', h: 599, options: [
-      'Combat', ['Infinite Health'], ['Unlimited Mana'], ['No Cooldowns'], ['Unlimited Potions'],
-      'Progression', ['Ability Points Never Decrease'], ['Bonus XP (+5000)'], ['Gold', ['1k', '10k', '99k']],
-    ] },
-    { id: 'onimusha', title: 'Onimusha: Way of the Sword', h: 507, options: [
-      'Survival', ['Infinite Health'], ['Infinite Stamina'], 'Combat', ['Max Oni Power'], null, ['Red Souls', ['10k', '99k', '999k']],
-    ] },
-    { id: 'wukong', title: 'Black Myth: Wukong', h: 642, options: [
-      'Survival', ['Infinite Health'], ['Infinite Mana'], ['Infinite Stamina'],
-      'Combat', ['Infinite Focus'], ['Infinite Spirit Energy'], ['Infinite Vessel Energy'], ['No Cooldowns'], ['Speed', ['2x', '4x'], ['Alt+F1', 'Alt+F2']],
-    ] },
-    { id: 'resonance', title: 'Resonance: A Plague Tale Legacy', h: 317, options: [
-      ['Infinite Health', [], ['Alt+F1']], ['Invisible', [], ['Alt+F2']],
-    ] },
-    { id: 'innocence', title: 'A Plague Tale: Innocence', h: 274, options: [['Invisible', [], ['Alt+F1']]] },
-    { id: 'requiem', title: 'A Plague Tale: Requiem', h: 274, options: [['Invisible', [], ['Alt+F1']]] },
-  ];
-
-  const tabs = document.querySelector('.tabs');
-  const panel = document.getElementById('game-panel');
-  const shot = panel.querySelector('img.shot');
-  const art = panel.querySelector('.art');
-  const heading = panel.querySelector('h3');
-  const list = panel.querySelector('.opts');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
 
   // ---- live banner -------------------------------------------------------
@@ -328,7 +283,9 @@
   // is laid over the banner in a screenshot, so without WebGL the still
   // screenshot is simply what shows.
   const ART_URL = (id) => `https://raw.githubusercontent.com/az-trainer-app/az_trainer/main/configs/games/${id}.jpg`;
-  const MOTION = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Always animated, whatever the system's reduced-motion setting says - the
+  // trainer's own banner is.
+  const MOTION = true;
 
   const VERT = `#version 300 es
   in vec2 p;
@@ -446,7 +403,7 @@
     const title = el('div', 'live-title');
     box.append(canvas, title);
     host.append(box);
-    const none = { set() {} };
+    const none = { set() {}, moveTo() {} };
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
     if (!gl) { box.remove(); return none; }
     const compile = (type, src) => {
@@ -519,7 +476,14 @@
     new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(box);
     new ResizeObserver(() => draw(performance.now())).observe(canvas);
     banners.push((now) => { if (visible) draw(now); });
-    return { set };
+    return {
+      set,
+      /** Carry the banner over to another screenshot. */
+      moveTo(host) {
+        host.append(box);
+        draw(performance.now());
+      },
+    };
   }
 
   if (MOTION) {
@@ -530,72 +494,113 @@
   }
 
   liveBanner(document.querySelector('.shot-hero .live')).set('wukong', 'Black Myth: Wukong');
-  const gameBanner = liveBanner(document.getElementById('game-live'));
 
-  function show(i, focus) {
-    const g = GAMES[i];
-    tabs.querySelectorAll('.tab').forEach((t, k) => {
-      t.setAttribute('aria-selected', String(k === i));
-      t.tabIndex = k === i ? 0 : -1;
-      if (k === i && focus) t.focus();
+  // ---- screenshot carousel -------------------------------------------------
+  const GAMES = [
+    { id: 'dawnwalker', title: 'The Blood of Dawnwalker', h: 599 },
+    { id: 'veilguard', title: 'Dragon Age: The Veilguard', h: 599 },
+    { id: 'onimusha', title: 'Onimusha: Way of the Sword', h: 507 },
+    { id: 'wukong', title: 'Black Myth: Wukong', h: 642 },
+    { id: 'resonance', title: 'Resonance: A Plague Tale Legacy', h: 317 },
+    { id: 'innocence', title: 'A Plague Tale: Innocence', h: 274 },
+    { id: 'requiem', title: 'A Plague Tale: Requiem', h: 274 },
+  ];
+  const AUTOPLAY_MS = 8000;
+
+  const carousel = document.querySelector('.carousel');
+  const viewport = carousel.querySelector('.viewport');
+  const track = carousel.querySelector('.track');
+  const caption = carousel.querySelector('.caption');
+  const dots = carousel.querySelector('.dots');
+  let current = 0;
+  let swiped = false;
+
+  const slides = GAMES.map((g, i) => {
+    const slide = el('div', 'slide');
+    slide.setAttribute('role', 'group');
+    slide.setAttribute('aria-roledescription', 'slide');
+    slide.setAttribute('aria-label', `${i + 1} of ${GAMES.length}: ${g.title}`);
+    const live = el('div', 'live');
+    const img = el('img');
+    img.src = `${g.id}.png`;
+    img.width = 527;
+    img.height = g.h;
+    img.alt = `AZ Trainer attached to ${g.title}`;
+    img.draggable = false;
+    live.append(img);
+    slide.append(live);
+    slide.addEventListener('click', () => { if (!swiped && i !== current) go(i, true); });
+    track.append(slide);
+
+    const dot = el('button', 'dot');
+    dot.type = 'button';
+    dot.title = g.title;
+    dot.setAttribute('aria-label', g.title);
+    dot.addEventListener('click', () => go(i, true));
+    dots.append(dot);
+    return { slide, live, dot };
+  });
+
+  // one live banner, carried to whichever screenshot is in front
+  const slideBanner = liveBanner(slides[0].live);
+
+  function go(i, byUser) {
+    current = (i + GAMES.length) % GAMES.length;
+    const g = GAMES[current];
+    slides.forEach(({ slide, dot }, k) => {
+      slide.classList.toggle('active', k === current);
+      slide.setAttribute('aria-hidden', String(k !== current));
+      dot.setAttribute('aria-current', String(k === current));
     });
-    panel.setAttribute('aria-labelledby', `tab-${g.id}`);
-    shot.src = `${g.id}.png`;
-    shot.height = g.h;
-    shot.alt = `AZ Trainer attached to ${g.title}`;
-    gameBanner.set(g.id, g.title);
-    art.style.backgroundImage = `url("https://raw.githubusercontent.com/az-trainer-app/az_trainer/main/configs/games/${g.id}.jpg")`;
-    heading.textContent = g.title;
-    list.replaceChildren(...g.options.map((o) => {
-      if (o === null) return el('li', 'rule');
-      if (typeof o === 'string') return el('li', 'group', o);
-      const [name, levels = [], keys = []] = o;
-      const li = el('li');
-      // shortcuts show as tooltips: a level's on its pill, a toggle's on its name
-      const label = el('span', '', name);
-      if (!levels.length && keys[0]) {
-        label.dataset.tip = keys[0];
-        label.classList.add('keyed');
-        label.tabIndex = 0;
-      }
-      li.append(label);
-      if (levels.length) {
-        const right = el('span', 'pills');
-        levels.forEach((level, k) => {
-          const pill = el('span', 'pill', level);
-          if (keys[k]) {
-            pill.dataset.tip = keys[k];
-            pill.tabIndex = 0;
-          }
-          right.append(pill);
-        });
-        li.append(right);
-      }
-      return li;
-    }));
-    history.replaceState(null, '', `#${g.id}`);
+    const front = slides[current].slide;
+    track.style.transform = `translateX(${viewport.clientWidth / 2 - (front.offsetLeft + front.offsetWidth / 2)}px)`;
+    caption.textContent = g.title;
+    slideBanner.moveTo(slides[current].live);
+    slideBanner.set(g.id, g.title);
+    if (byUser) {
+      history.replaceState(null, '', `#${g.id}`);
+      autoplay();
+    }
   }
 
-  GAMES.forEach((g, i) => {
-    const t = el('button', 'tab', g.title);
-    t.type = 'button';
-    t.id = `tab-${g.id}`;
-    t.setAttribute('role', 'tab');
-    t.setAttribute('aria-controls', 'game-panel');
-    t.addEventListener('click', () => show(i));
-    tabs.append(t);
-  });
-  tabs.addEventListener('keydown', (e) => {
-    const cur = GAMES.findIndex((g) => g.id === panel.getAttribute('aria-labelledby').slice(4));
-    const step = { ArrowRight: 1, ArrowLeft: -1, Home: -cur, End: GAMES.length - 1 - cur }[e.key];
+  // advances on its own, paused while the pointer or focus is on it
+  let timer = 0;
+  let held = false;
+  function autoplay() {
+    clearInterval(timer);
+    timer = setInterval(() => { if (!held && !document.hidden) go(current + 1); }, AUTOPLAY_MS);
+  }
+  carousel.addEventListener('pointerenter', () => { held = true; });
+  carousel.addEventListener('pointerleave', () => { held = false; });
+  carousel.addEventListener('focusin', () => { held = true; });
+  carousel.addEventListener('focusout', () => { held = false; });
+
+  carousel.querySelector('.prev').addEventListener('click', () => go(current - 1, true));
+  carousel.querySelector('.next').addEventListener('click', () => go(current + 1, true));
+  carousel.addEventListener('keydown', (e) => {
+    const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
     if (step === undefined) return;
     e.preventDefault();
-    show((cur + step + GAMES.length) % GAMES.length, true);
+    go(current + step, true);
   });
 
+  let startX = null;
+  viewport.addEventListener('pointerdown', (e) => { startX = e.clientX; swiped = false; });
+  viewport.addEventListener('pointerup', (e) => {
+    if (startX === null) return;
+    const dx = e.clientX - startX;
+    startX = null;
+    if (Math.abs(dx) > 40) {
+      swiped = true;
+      go(current + (dx < 0 ? 1 : -1), true);
+    }
+  });
+
+  new ResizeObserver(() => go(current)).observe(viewport);
   const start = GAMES.findIndex((g) => `#${g.id}` === location.hash);
-  show(start >= 0 ? start : 0);
+  go(start >= 0 ? start : 0);
   if (start >= 0) document.getElementById('games').scrollIntoView();
+  autoplay();
 
   // the latest release's version on the download button, when GitHub answers
   fetch('https://api.github.com/repos/az-trainer-app/az_trainer/releases/latest')
