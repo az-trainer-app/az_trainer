@@ -58,8 +58,6 @@ Single-player only. Do not use with online or competitive games.
 3. Click the options you want.
 4. Close the trainer with **X** when done.
 
-If it says "cannot open process", run it as Administrator.
-
 ## Adding games
 
 Each game is a single JavaScript file. See [docs/DEVELOPING.md](docs/DEVELOPING.md).

@@ -87,7 +87,7 @@
   .btn svg { width: 18px; height: 18px; }
   .meta { color: var(--dim); font-size: 13px; margin-top: 14px; }
   .shot-hero { justify-self: center; position: relative; }
-  .shot-hero img { width: min(420px, 100%); height: auto; display: block; filter: drop-shadow(0 30px 60px rgba(0,0,0,.55)); }
+  .shot-hero .live { filter: drop-shadow(0 30px 60px rgba(0,0,0,.55)); }
 
   /* ---- sections -------------------------------------------------------- */
   section { padding-block: 72px; }
@@ -110,8 +110,8 @@
   }
   .game .art { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .16; filter: blur(18px) saturate(1.2); transform: scale(1.15); pointer-events: none; transition: background-image .2s; }
   .game > * { position: relative; }
-  .game img.shot { width: min(420px, 100%); height: auto; display: block; filter: drop-shadow(0 18px 40px rgba(0,0,0,.5)); }
-  @media (max-width: 860px) { .game { grid-template-columns: 1fr; padding: 20px; gap: 24px; } .game img.shot { margin-inline: auto; } }
+  .game .live { filter: drop-shadow(0 18px 40px rgba(0,0,0,.5)); }
+  @media (max-width: 860px) { .game { grid-template-columns: 1fr; padding: 20px; gap: 24px; } .game .live { margin-inline: auto; } }
   .game h3 { font-size: 24px; margin: 4px 0 18px; }
   .opts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
   .opts li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
@@ -135,6 +135,40 @@
   .card .ic { width: 22px; height: 22px; color: var(--accent-hi); margin-bottom: 12px; }
   .note { margin-top: 24px; color: var(--dim); font-size: 14px; }
   .note code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); font-size: 13px; }
+
+  /* ---- live banner over a screenshot ----------------------------------
+     Screenshots are 527px wide; the banner inside them starts 1px in and
+     38px down and is 525x135 - the trainer's 420x108 at 125%. The canvas
+     redraws it live over that spot, and the title is set again on top. */
+  /* a definite width: a size container cannot take it from its content */
+  .live { position: relative; container-type: inline-size; width: 420px; max-width: 100%; }
+  .live > img { width: 100%; height: auto; display: block; }
+  .live-banner {
+    position: absolute; left: calc(100cqw / 527); top: calc(38 * 100cqw / 527); width: calc(525 * 100cqw / 527);
+    aspect-ratio: 420 / 108; container-type: inline-size; overflow: hidden;
+    opacity: 0; transition: opacity .35s ease;
+  }
+  .live-banner.ready { opacity: 1; }
+  .live-banner canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .live-title {
+    position: absolute; left: calc(14 * 100cqw / 420); bottom: calc(8 * 100cqw / 420);
+    font-size: calc(20 * 100cqw / 420); line-height: 1.4; font-weight: 600; color: #fff; white-space: nowrap;
+    text-shadow: calc(100cqw / 420) calc(100cqw / 420) 0 rgba(0, 0, 0, .75);
+  }
+
+  /* ---- shortcut tooltips ----------------------------------------------- */
+  [data-tip] { position: relative; cursor: default; }
+  [data-tip]::after {
+    content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px);
+    transform: translate(-50%, 4px); opacity: 0; pointer-events: none; z-index: 5;
+    font: 600 12px/1 "Segoe UI", system-ui, sans-serif; color: var(--text); white-space: nowrap;
+    background: #0b0d12; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 6px 8px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, .45); transition: opacity .12s, transform .12s;
+  }
+  [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translate(-50%, 0); }
+  [data-tip]:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+  .pill[data-tip]:hover { color: var(--text); border-color: var(--dim); }
+  .keyed { border-bottom: 1px dotted var(--dim); }
 
   footer { border-top: 1px solid var(--line); padding-block: 32px; color: var(--dim); font-size: 14px; }
   footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
@@ -175,7 +209,11 @@
         </div>
         <div class="meta">Windows 10/11 · one exe, no installer · single-player games only</div>
       </div>
-      <div class="shot-hero"><img src="wukong.png" alt="AZ Trainer attached to Black Myth: Wukong" width="527" height="642"></div>
+      <div class="shot-hero">
+        <div class="live" data-game="wukong" data-title="Black Myth: Wukong">
+          <img src="wukong.png" alt="AZ Trainer attached to Black Myth: Wukong" width="527" height="642">
+        </div>
+      </div>
     </div>
   </div>
 
@@ -186,7 +224,7 @@
       <div class="tabs" role="tablist" aria-label="Games"></div>
       <div class="game" role="tabpanel" id="game-panel" tabindex="0">
         <div class="art" aria-hidden="true"></div>
-        <img class="shot" alt="" width="527" height="599">
+        <div class="live" id="game-live"><img class="shot" alt="" width="527" height="599"></div>
         <div>
           <h3></h3>
           <ul class="opts"></ul>
@@ -204,7 +242,6 @@
         <div class="card"><div class="n">2</div><h4>Start your game</h4><p>The trainer detects which supported game is running and attaches to it automatically.</p></div>
         <div class="card"><div class="n">3</div><h4>Click what you want</h4><p>Toggle options in the window or with their shortcuts. Close the trainer and everything is put back.</p></div>
       </div>
-      <p class="note">If it says <code>cannot open process</code>, run it as Administrator.</p>
     </div>
   </section>
 
@@ -283,6 +320,218 @@
   const list = panel.querySelector('.opts');
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
 
+  // ---- live banner -------------------------------------------------------
+  // The trainer's banner, redrawn on the GPU the way the trainer draws it
+  // (src/art.rs, src/main.rs): the art centred, each side stretched out of its
+  // edge and stirred like a liquid flowing away from the picture, faded into
+  // the window colour at the bottom, and a double glint every 7 seconds. It
+  // is laid over the banner in a screenshot, so without WebGL the still
+  // screenshot is simply what shows.
+  const ART_URL = (id) => `https://raw.githubusercontent.com/az-trainer-app/az_trainer/main/configs/games/${id}.jpg`;
+  const MOTION = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const VERT = `#version 300 es
+  in vec2 p;
+  out vec2 uv;
+  void main() { uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5); gl_Position = vec4(p, 0.0, 1.0); }`;
+
+  const FRAG = `#version 300 es
+  precision highp float;
+  in vec2 uv;
+  out vec4 o;
+  uniform sampler2D art;
+  uniform vec2 img;     // art size, px
+  uniform float view;  // canvas height, px
+  uniform float t;     // seconds
+  uniform bool motion;
+
+  const float W = 420.0, H = 108.0, RATIO = 420.0 / 108.0;
+  const vec3 BG = vec3(17.0, 19.0, 26.0) / 255.0;
+  const float FADE = 0.34, INTO_ART = 0.45, LIFT = 0.35, TAU = 6.28318531;
+
+  // art.rs liquid(): vertical displacement in banner heights; every term turns
+  // a whole number of times per 6 s loop and travels away from the art
+  float flow(float x, float y, float phi, float seed) {
+    float qx = x + 0.28 * sin(2.6 * y - phi + 0.5 + seed) + 0.12 * sin(5.3 * y + 2.0 * phi + 1.3 * seed);
+    float qy = y + 0.28 * sin(3.1 * x - phi + 1.9 - seed) + 0.12 * sin(4.9 * x - 2.0 * phi + 0.7 + 0.6 * seed);
+    return 0.20 * sin(3.4 * qx + 2.2 * qy - phi + 2.0 * seed) + 0.09 * sin(6.3 * qy + 4.1 * qx - 2.0 * phi + 2.1 - seed);
+  }
+
+  vec3 at(float x, float y, float lod) { return textureLod(art, vec2(x, y), lod).rgb; }
+
+  // the stretched fill beyond an edge: that edge's column, blurred vertically
+  vec3 edge(bool right, float y, float lod) {
+    float x = right ? 1.0 - 0.5 / img.x : 0.5 / img.x;
+    float sigma = max(img.y / 60.0, 4.0) / img.y;
+    vec3 sum = vec3(0.0);
+    float total = 0.0;
+    for (int i = -6; i <= 6; i++) {
+      float k = float(i) / 3.0;
+      float w = exp(-0.5 * k * k);
+      sum += w * at(x, clamp(y + k * sigma, 0.0, 1.0), lod);
+      total += w;
+    }
+    return sum / total;
+  }
+
+  float mirror01(float v) { float s = mod(v, 2.0); return s > 1.0 ? 2.0 - s : s; }
+
+  void main() {
+    float cx = uv.x * RATIO, cy = uv.y;
+    float artW = img.x / img.y;
+    float base = max(log2(img.y / view), 0.0);
+    float fadePow = 1.0;
+    vec3 c;
+    if (artW >= RATIO) {
+      c = at((cx + (artW - RATIO) * 0.5) / artW, cy, base);
+    } else {
+      float ox = (RATIO - artW) * 0.5;
+      float band = min(INTO_ART, artW * 0.25);
+      bool right = cx > ox + artW * 0.5;
+      float px = right ? cx - (ox + artW - band) : (ox + band) - cx;
+      if (px <= 0.0) {
+        c = at((cx - ox) / artW, cy, base);
+      } else {
+        float rw = band + ox;
+        float stir = smoothstep(band / rw * 0.1, band / rw * 1.1, px / rw);
+        float seed = right ? 2.3 : 0.0;
+        float phi = motion ? TAU * mod(t, 6.0) / 6.0 : 0.0;
+        float dy = flow(px, cy, phi, seed);
+        float dx = 0.7 * flow(cy + 1.7, px + 3.1, phi, seed);
+        float slope = (flow(px + 1.0 / 128.0, cy, phi, seed) - dy) * 128.0;
+        float sheen = 1.0 + stir * clamp(slope * 0.08, -0.1, 0.1);
+        float sx = clamp(px + stir * dx, 0.0, rw);
+        float sy = mirror01(cy * (1.0 - LIFT * stir) + stir * dy);
+        float soft = max(log2(img.y / 48.0), base);
+        vec3 sharp, blurred;
+        if (sx < band) {
+          float ax = right ? (artW - band + sx) / artW : (band - sx) / artW;
+          sharp = at(ax, sy, base);
+          blurred = at(ax, sy, soft);
+        } else {
+          sharp = edge(right, sy, base);
+          blurred = edge(right, sy, soft);
+        }
+        c = min(mix(sharp, blurred, stir) * sheen, vec3(1.0));
+        fadePow = 1.0 + 1.5 * stir;
+      }
+    }
+    c = mix(c, BG, pow(clamp((cy - (1.0 - FADE)) / FADE, 0.0, 1.0), fadePow));
+
+    // main.rs light_sweep(): two 140px bands of 110deg gradients, back to back
+    if (motion) {
+      vec2 p = vec2(uv.x * W, uv.y * H);
+      float cycle = mod(t, 7.0) / 7.0;
+      vec2 dir = vec2(0.93969262, 0.34202014);
+      float len = 70.0 * dir.x + H * dir.y;
+      for (int k = 0; k < 2; k++) {
+        float q = (cycle - (k == 0 ? 0.0 : 0.055)) / 0.045;
+        if (q < 0.0 || q >= 1.0) continue;
+        float x0 = -140.0 + 560.0 * q * q * (3.0 - 2.0 * q);
+        float a = 0.0;
+        if (p.x >= x0 && p.x < x0 + 70.0) a = clamp(0.5 + dot(p - vec2(x0 + 35.0, H * 0.5), dir) / len, 0.0, 1.0);
+        else if (p.x >= x0 + 70.0 && p.x < x0 + 140.0) a = 1.0 - clamp(0.5 + dot(p - vec2(x0 + 105.0, H * 0.5), dir) / len, 0.0, 1.0);
+        c = mix(c, vec3(1.0), a * 28.0 / 255.0);
+      }
+    }
+    o = vec4(c, 1.0);
+  }`;
+
+  const banners = [];
+
+  /** Put a live banner over the screenshot in `host`; returns `set(id, title)`. */
+  function liveBanner(host) {
+    const box = el('div', 'live-banner');
+    const canvas = el('canvas');
+    const title = el('div', 'live-title');
+    box.append(canvas, title);
+    host.append(box);
+    const none = { set() {} };
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false });
+    if (!gl) { box.remove(); return none; }
+    const compile = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const prog = gl.createProgram();
+    try {
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    } catch (e) {
+      console.warn('live banner:', e);
+      box.remove();
+      return none;
+    }
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const uniform = (n) => gl.getUniformLocation(prog, n);
+    const uImg = uniform('img'), uView = uniform('view'), uT = uniform('t'), uMotion = uniform('motion');
+    const tex = gl.createTexture();
+    let ready = false, want = '', visible = true;
+
+    function draw(now) {
+      if (!ready) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+      if (!w || !h) return;
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      gl.viewport(0, 0, w, h);
+      gl.uniform1f(uView, h);
+      gl.uniform1f(uT, now / 1000);
+      gl.uniform1i(uMotion, MOTION ? 1 : 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+
+    function set(id, name) {
+      title.textContent = name;
+      if (want === id) return;
+      want = id;
+      ready = false;
+      box.classList.remove('ready');
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.onload = () => {
+        if (want !== id) return;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.uniform2f(uImg, image.naturalWidth, image.naturalHeight);
+        ready = true;
+        draw(performance.now());
+        box.classList.add('ready');
+      };
+      image.src = ART_URL(id);
+    }
+
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(box);
+    new ResizeObserver(() => draw(performance.now())).observe(canvas);
+    banners.push((now) => { if (visible) draw(now); });
+    return { set };
+  }
+
+  if (MOTION) {
+    (function frame(now) {
+      if (!document.hidden) banners.forEach((draw) => draw(now));
+      requestAnimationFrame(frame);
+    })(performance.now());
+  }
+
+  liveBanner(document.querySelector('.shot-hero .live')).set('wukong', 'Black Myth: Wukong');
+  const gameBanner = liveBanner(document.getElementById('game-live'));
+
   function show(i, focus) {
     const g = GAMES[i];
     tabs.querySelectorAll('.tab').forEach((t, k) => {
@@ -294,6 +543,7 @@
     shot.src = `${g.id}.png`;
     shot.height = g.h;
     shot.alt = `AZ Trainer attached to ${g.title}`;
+    gameBanner.set(g.id, g.title);
     art.style.backgroundImage = `url("https://raw.githubusercontent.com/az-trainer-app/az_trainer/main/configs/games/${g.id}.jpg")`;
     heading.textContent = g.title;
     list.replaceChildren(...g.options.map((o) => {
@@ -301,11 +551,26 @@
       if (typeof o === 'string') return el('li', 'group', o);
       const [name, levels = [], keys = []] = o;
       const li = el('li');
-      li.append(el('span', '', name));
-      const right = el('span', 'pills');
-      levels.forEach((l) => right.append(el('span', 'pill', l)));
-      keys.forEach((k) => right.append(el('kbd', '', k)));
-      if (right.childElementCount) li.append(right);
+      // shortcuts show as tooltips: a level's on its pill, a toggle's on its name
+      const label = el('span', '', name);
+      if (!levels.length && keys[0]) {
+        label.dataset.tip = keys[0];
+        label.classList.add('keyed');
+        label.tabIndex = 0;
+      }
+      li.append(label);
+      if (levels.length) {
+        const right = el('span', 'pills');
+        levels.forEach((level, k) => {
+          const pill = el('span', 'pill', level);
+          if (keys[k]) {
+            pill.dataset.tip = keys[k];
+            pill.tabIndex = 0;
+          }
+          right.append(pill);
+        });
+        li.append(right);
+      }
       return li;
     }));
     history.replaceState(null, '', `#${g.id}`);
