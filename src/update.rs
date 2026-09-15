@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use sha2::Digest;
 
-const REPO: &str = "da-z/az_trainer";
+const REPO: &str = "az-trainer-app/az_trainer";
 const BRANCH: &str = "main";
 const EXE_ASSET: &str = "az_trainer.exe";
 const VERSION: &str = env!("CARGO_PKG_VERSION");

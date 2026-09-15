@@ -2,6 +2,8 @@
 
 A small, fast game trainer for Windows. Start it, start your game, click what you want.
 
+**Website:** https://az-trainer-app.github.io/az_trainer/
+
 ## Supported games
 
 <details open>

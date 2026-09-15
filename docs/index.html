@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AZ Trainer</title>
+<meta name="description" content="A small, fast game trainer for Windows. Start it, start your game, click what you want.">
+<meta property="og:title" content="AZ Trainer">
+<meta property="og:description" content="A small, fast game trainer for Windows. Start it, start your game, click what you want.">
+<meta property="og:image" content="https://az-trainer-app.github.io/az_trainer/wukong.png">
+<link rel="icon" href="favicon.ico">
+<style>
+  :root {
+    --bg: #11131a;
+    --panel: #181b23;
+    --panel-2: #1e222c;
+    --line: #2a2f3a;
+    --text: #d6dae3;
+    --dim: #7c8595;
+    --accent: #c23b3b;
+    --accent-hi: #d85050;
+    --radius: 14px;
+    --max: 1080px;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding-inline: 20px; }
+
+  /* ---- header ---------------------------------------------------------- */
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; text-decoration: none; letter-spacing: .2px; }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 7px; background: var(--accent);
+    display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 700;
+  }
+  nav.links { display: flex; gap: 22px; font-size: 14px; }
+  nav.links a { text-decoration: none; color: var(--dim); }
+  nav.links a:hover { color: var(--text); }
+  @media (max-width: 560px) { nav.links a.opt { display: none; } }
+
+  /* ---- hero ------------------------------------------------------------ */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
+  .hero::before {
+    content: ""; position: absolute; inset: -20%;
+    background:
+      radial-gradient(40% 50% at 20% 30%, rgba(194, 59, 59, .28), transparent 70%),
+      radial-gradient(35% 45% at 85% 20%, rgba(90, 110, 170, .18), transparent 70%),
+      radial-gradient(50% 60% at 60% 90%, rgba(194, 59, 59, .12), transparent 70%);
+    filter: blur(20px);
+    animation: drift 18s ease-in-out infinite alternate;
+  }
+  @keyframes drift { from { transform: translate3d(-2%, -1%, 0) scale(1); } to { transform: translate3d(2%, 2%, 0) scale(1.06); } }
+  @media (prefers-reduced-motion: reduce) { .hero::before { animation: none; } }
+  .hero .wrap {
+    position: relative; display: grid; grid-template-columns: 1.05fr .95fr; gap: 48px;
+    align-items: center; padding-block: 72px 64px;
+  }
+  @media (max-width: 860px) { .hero .wrap { grid-template-columns: 1fr; padding-block: 48px; } }
+  .eyebrow { color: var(--accent-hi); font-size: 13px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; }
+  h1 { font-size: clamp(38px, 6vw, 60px); line-height: 1.05; margin: 10px 0 16px; letter-spacing: -1px; }
+  .lede { color: var(--dim); font-size: 19px; max-width: 32ch; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px; padding: 12px 20px; border-radius: 10px;
+    font-weight: 600; text-decoration: none; border: 1px solid var(--line); transition: background .15s, border-color .15s, transform .15s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-hi); border-color: var(--accent-hi); }
+  .btn.ghost { background: var(--panel); }
+  .btn.ghost:hover { border-color: var(--dim); }
+  .btn svg { width: 18px; height: 18px; }
+  .meta { color: var(--dim); font-size: 13px; margin-top: 14px; }
+  .shot-hero { justify-self: center; position: relative; }
+  .shot-hero img { width: min(420px, 100%); height: auto; display: block; filter: drop-shadow(0 30px 60px rgba(0,0,0,.55)); }
+
+  /* ---- sections -------------------------------------------------------- */
+  section { padding-block: 72px; }
+  section + section { border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(26px, 3.4vw, 34px); margin: 0 0 10px; letter-spacing: -.4px; }
+  .sub { color: var(--dim); margin: 0 0 32px; max-width: 60ch; }
+
+  /* ---- games tabs ------------------------------------------------------ */
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  .tab {
+    font: inherit; font-size: 14px; color: var(--dim); background: var(--panel); border: 1px solid var(--line);
+    padding: 8px 14px; border-radius: 999px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+  }
+  .tab:hover { color: var(--text); border-color: var(--dim); }
+  .tab[aria-selected="true"] { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+  .game {
+    position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--panel); display: grid; grid-template-columns: auto 1fr; gap: 36px; padding: 32px;
+  }
+  .game .art { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .16; filter: blur(18px) saturate(1.2); transform: scale(1.15); pointer-events: none; transition: background-image .2s; }
+  .game > * { position: relative; }
+  .game img.shot { width: min(420px, 100%); height: auto; display: block; filter: drop-shadow(0 18px 40px rgba(0,0,0,.5)); }
+  @media (max-width: 860px) { .game { grid-template-columns: 1fr; padding: 20px; gap: 24px; } .game img.shot { margin-inline: auto; } }
+  .game h3 { font-size: 24px; margin: 4px 0 18px; }
+  .opts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .opts li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+  .opts li.group { border: 0; padding: 18px 0 4px; color: var(--dim); font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; }
+  .opts li.group:first-child { padding-top: 0; }
+  .opts li.rule { border: 0; padding: 8px 0 0; }
+  .pills { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .pill, kbd {
+    font: 12px/1 "Segoe UI", system-ui, sans-serif; padding: 5px 8px; border-radius: 6px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  kbd { color: var(--text); border-bottom-width: 2px; }
+
+  /* ---- steps & features ------------------------------------------------ */
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+  .card .n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line); color: var(--accent-hi); font-weight: 700; font-size: 14px; margin-bottom: 14px; }
+  .card h4 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--dim); font-size: 15px; }
+  .card .ic { width: 22px; height: 22px; color: var(--accent-hi); margin-bottom: 12px; }
+  .note { margin-top: 24px; color: var(--dim); font-size: 14px; }
+  .note code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--line); font-size: 13px; }
+
+  footer { border-top: 1px solid var(--line); padding-block: 32px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+  footer a { color: var(--dim); }
+  footer a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="mark">AZ</span>AZ Trainer</a>
+    <nav class="links">
+      <a href="#games">Games</a>
+      <a class="opt" href="#how">How it works</a>
+      <a class="opt" href="#features">Features</a>
+      <a href="https://github.com/az-trainer-app/az_trainer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap">
+      <div>
+        <div class="eyebrow">Game trainer for Windows</div>
+        <h1>Start it. Start your game. Click what you want.</h1>
+        <p class="lede">A small, fast trainer that finds your game on its own and keeps its scripts up to date.</p>
+        <div class="cta">
+          <a class="btn primary" href="https://github.com/az-trainer-app/az_trainer/releases/latest/download/az_trainer.exe">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/></svg>
+            Download <span id="version"></span>
+          </a>
+          <a class="btn ghost" href="https://github.com/az-trainer-app/az_trainer">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+            Source
+          </a>
+        </div>
+        <div class="meta">Windows 10/11 · one exe, no installer · single-player games only</div>
+      </div>
+      <div class="shot-hero"><img src="wukong.png" alt="AZ Trainer attached to Black Myth: Wukong" width="527" height="642"></div>
+    </div>
+  </div>
+
+  <section id="games">
+    <div class="wrap">
+      <h2>Supported games</h2>
+      <p class="sub">Each game is a small script. New games and fixes arrive on their own &mdash; the trainer syncs its scripts from GitHub.</p>
+      <div class="tabs" role="tablist" aria-label="Games"></div>
+      <div class="game" role="tabpanel" id="game-panel" tabindex="0">
+        <div class="art" aria-hidden="true"></div>
+        <img class="shot" alt="" width="527" height="599">
+        <div>
+          <h3></h3>
+          <ul class="opts"></ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">No setup, no config files to find, nothing to install.</p>
+      <div class="grid3">
+        <div class="card"><div class="n">1</div><h4>Download</h4><p>Put <code>az_trainer.exe</code> in a folder of its own. On first start it downloads the game scripts next to itself.</p></div>
+        <div class="card"><div class="n">2</div><h4>Start your game</h4><p>The trainer detects which supported game is running and attaches to it automatically.</p></div>
+        <div class="card"><div class="n">3</div><h4>Click what you want</h4><p>Toggle options in the window or with their shortcuts. Close the trainer and everything is put back.</p></div>
+      </div>
+      <p class="note">If it says <code>cannot open process</code>, run it as Administrator.</p>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>Features</h2>
+      <p class="sub">Small on purpose, careful where it matters.</p>
+      <div class="grid3">
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <h4>Finds the game and its version</h4><p>Attaches on its own, and a script never touches a build it was not made for.</p>
+        </div>
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+          <h4>Keyboard shortcuts</h4><p>Global hotkeys like <kbd>Alt</kbd>+<kbd>F1</kbd>, with a brief on-screen notice in game.</p>
+        </div>
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          <h4>Updates itself</h4><p>New trainer versions, new games and fixes arrive without you downloading anything.</p>
+        </div>
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+          <h4>Remembers your settings</h4><p>Each game keeps the options you had on, ready for next time.</p>
+        </div>
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
+          <h4>Shows what is loaded</h4><p>The loaded script's update date, checksum and a link to its source, right in the window.</p>
+        </div>
+        <div class="card">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>
+          <h4>Open scripts</h4><p>Every game is one readable JavaScript file. <a href="https://github.com/az-trainer-app/az_trainer/blob/main/docs/DEVELOPING.md">Add your own</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Single-player only. Do not use with online or competitive games.</span>
+    <span><a href="https://github.com/az-trainer-app/az_trainer/releases">Releases</a> · <a href="https://github.com/az-trainer-app/az_trainer/blob/main/docs/DEVELOPING.md">Developing</a> · <a href="https://github.com/az-trainer-app/az_trainer">GitHub</a></span>
+  </div>
+</footer>
+
+<script>
+  // Each game's options, as its script declares them: `null` is a plain
+  // divider, a string a titled one.
+  const GAMES = [
+    { id: 'dawnwalker', title: 'The Blood of Dawnwalker', h: 599, options: [
+      'Survival', ['Infinite Human Health'], ['Infinite Vampiric Blood'], ['Infinite Stamina'], ['No Hit Reaction'],
+      null, ['No Slow-Motion Finishers'], ['Speed', ['2x', '4x', '8x'], ['Alt+F1', 'Alt+F2', 'Alt+F3']], ['Denarii', ['1k', '10k', '99k']],
+    ] },
+    { id: 'veilguard', title: 'Dragon Age: The Veilguard', h: 599, options: [
+      'Combat', ['Infinite Health'], ['Unlimited Mana'], ['No Cooldowns'], ['Unlimited Potions'],
+      'Progression', ['Ability Points Never Decrease'], ['Bonus XP (+5000)'], ['Gold', ['1k', '10k', '99k']],
+    ] },
+    { id: 'onimusha', title: 'Onimusha: Way of the Sword', h: 507, options: [
+      'Survival', ['Infinite Health'], ['Infinite Stamina'], 'Combat', ['Max Oni Power'], null, ['Red Souls', ['10k', '99k', '999k']],
+    ] },
+    { id: 'wukong', title: 'Black Myth: Wukong', h: 642, options: [
+      'Survival', ['Infinite Health'], ['Infinite Mana'], ['Infinite Stamina'],
+      'Combat', ['Infinite Focus'], ['Infinite Spirit Energy'], ['Infinite Vessel Energy'], ['No Cooldowns'], ['Speed', ['2x', '4x'], ['Alt+F1', 'Alt+F2']],
+    ] },
+    { id: 'resonance', title: 'Resonance: A Plague Tale Legacy', h: 317, options: [
+      ['Infinite Health', [], ['Alt+F1']], ['Invisible', [], ['Alt+F2']],
+    ] },
+    { id: 'innocence', title: 'A Plague Tale: Innocence', h: 274, options: [['Invisible', [], ['Alt+F1']]] },
+    { id: 'requiem', title: 'A Plague Tale: Requiem', h: 274, options: [['Invisible', [], ['Alt+F1']]] },
+  ];
+
+  const tabs = document.querySelector('.tabs');
+  const panel = document.getElementById('game-panel');
+  const shot = panel.querySelector('img.shot');
+  const art = panel.querySelector('.art');
+  const heading = panel.querySelector('h3');
+  const list = panel.querySelector('.opts');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+
+  function show(i, focus) {
+    const g = GAMES[i];
+    tabs.querySelectorAll('.tab').forEach((t, k) => {
+      t.setAttribute('aria-selected', String(k === i));
+      t.tabIndex = k === i ? 0 : -1;
+      if (k === i && focus) t.focus();
+    });
+    panel.setAttribute('aria-labelledby', `tab-${g.id}`);
+    shot.src = `${g.id}.png`;
+    shot.height = g.h;
+    shot.alt = `AZ Trainer attached to ${g.title}`;
+    art.style.backgroundImage = `url("https://raw.githubusercontent.com/az-trainer-app/az_trainer/main/configs/games/${g.id}.jpg")`;
+    heading.textContent = g.title;
+    list.replaceChildren(...g.options.map((o) => {
+      if (o === null) return el('li', 'rule');
+      if (typeof o === 'string') return el('li', 'group', o);
+      const [name, levels = [], keys = []] = o;
+      const li = el('li');
+      li.append(el('span', '', name));
+      const right = el('span', 'pills');
+      levels.forEach((l) => right.append(el('span', 'pill', l)));
+      keys.forEach((k) => right.append(el('kbd', '', k)));
+      if (right.childElementCount) li.append(right);
+      return li;
+    }));
+    history.replaceState(null, '', `#${g.id}`);
+  }
+
+  GAMES.forEach((g, i) => {
+    const t = el('button', 'tab', g.title);
+    t.type = 'button';
+    t.id = `tab-${g.id}`;
+    t.setAttribute('role', 'tab');
+    t.setAttribute('aria-controls', 'game-panel');
+    t.addEventListener('click', () => show(i));
+    tabs.append(t);
+  });
+  tabs.addEventListener('keydown', (e) => {
+    const cur = GAMES.findIndex((g) => g.id === panel.getAttribute('aria-labelledby').slice(4));
+    const step = { ArrowRight: 1, ArrowLeft: -1, Home: -cur, End: GAMES.length - 1 - cur }[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    show((cur + step + GAMES.length) % GAMES.length, true);
+  });
+
+  const start = GAMES.findIndex((g) => `#${g.id}` === location.hash);
+  show(start >= 0 ? start : 0);
+  if (start >= 0) document.getElementById('games').scrollIntoView();
+
+  // the latest release's version on the download button, when GitHub answers
+  fetch('https://api.github.com/repos/az-trainer-app/az_trainer/releases/latest')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((r) => { if (r && r.tag_name) document.getElementById('version').textContent = r.tag_name; })
+    .catch(() => {});
+</script>
+</body>
+</html>
