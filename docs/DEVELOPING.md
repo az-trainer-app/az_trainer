@@ -43,7 +43,7 @@ export const options = [
 ];
 ```
 
-Put it in `configs/games/` with `somegame.jpg` beside it for artwork.
+Put it in `configs/games/` with `somegame.jpg` or `somegame.png` beside it for artwork.
 `{ separator: 'Heading' }` draws a titled divider; `{ separator: true }` a plain line.
 
 ### Host API
