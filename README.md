@@ -2,21 +2,42 @@
 
 A small, fast game trainer for Windows. Start it, start your game, click what you want.
 
-| The Blood of Dawnwalker | Dragon Age: The Veilguard |
-| :---: | :---: |
-| ![AZ Trainer attached to The Blood of Dawnwalker](docs/dawnwalker.png) | ![AZ Trainer attached to Dragon Age: The Veilguard](docs/veilguard.png) |
+## Supported games
 
-| Onimusha: Way of the Sword | Black Myth: Wukong |
-| :---: | :---: |
-| ![AZ Trainer attached to Onimusha: Way of the Sword](docs/onimusha.png) | ![AZ Trainer attached to Black Myth: Wukong](docs/wukong.png) |
+<details open>
+<summary><b>The Blood of Dawnwalker</b></summary>
+<p align="center"><img src="docs/dawnwalker.png" alt="AZ Trainer attached to The Blood of Dawnwalker"></p>
+</details>
 
-| Resonance: A Plague Tale Legacy | A Plague Tale: Innocence |
-| :---: | :---: |
-| ![AZ Trainer attached to Resonance: A Plague Tale Legacy](docs/resonance.png) | ![AZ Trainer attached to A Plague Tale: Innocence](docs/innocence.png) |
+<details>
+<summary><b>Dragon Age: The Veilguard</b></summary>
+<p align="center"><img src="docs/veilguard.png" alt="AZ Trainer attached to Dragon Age: The Veilguard"></p>
+</details>
 
-| A Plague Tale: Requiem | |
-| :---: | :---: |
-| ![AZ Trainer attached to A Plague Tale: Requiem](docs/requiem.png) | |
+<details>
+<summary><b>Onimusha: Way of the Sword</b></summary>
+<p align="center"><img src="docs/onimusha.png" alt="AZ Trainer attached to Onimusha: Way of the Sword"></p>
+</details>
+
+<details>
+<summary><b>Black Myth: Wukong</b></summary>
+<p align="center"><img src="docs/wukong.png" alt="AZ Trainer attached to Black Myth: Wukong"></p>
+</details>
+
+<details>
+<summary><b>Resonance: A Plague Tale Legacy</b></summary>
+<p align="center"><img src="docs/resonance.png" alt="AZ Trainer attached to Resonance: A Plague Tale Legacy"></p>
+</details>
+
+<details>
+<summary><b>A Plague Tale: Innocence</b></summary>
+<p align="center"><img src="docs/innocence.png" alt="AZ Trainer attached to A Plague Tale: Innocence"></p>
+</details>
+
+<details>
+<summary><b>A Plague Tale: Requiem</b></summary>
+<p align="center"><img src="docs/requiem.png" alt="AZ Trainer attached to A Plague Tale: Requiem"></p>
+</details>
 
 ## Features
 
