@@ -2,6 +2,8 @@
 
 mod art;
 #[cfg(feature = "devtools")]
+mod dev;
+#[cfg(feature = "devtools")]
 mod devtools;
 mod engine;
 mod finder;

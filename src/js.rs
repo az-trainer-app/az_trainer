@@ -79,6 +79,8 @@ impl Script {
         let ctx = Context::full(&rt).map_err(|e| e.to_string())?;
 
         register_host(&ctx)?;
+        #[cfg(feature = "devtools")]
+        register_dev(&ctx)?;
 
         let name = path.to_string_lossy().replace('\\', "/");
         let (processes, title, art, options, builds, columns) = ctx.with(|ctx| {
@@ -464,6 +466,102 @@ const SCAN_LIMIT: usize = 40_000_000;
 
 /// How many pointers one findPointers call may return.
 const POINTER_LIMIT: usize = 1_000_000;
+
+/// Install `dev.*`: capture the game's window and drive its input, for a
+/// research session that looks at the game and acts in it. Devtools builds only.
+#[cfg(feature = "devtools")]
+fn register_dev(ctx: &Context) -> Result<(), String> {
+    use rquickjs::function::Opt;
+    ctx.with(|ctx| {
+        let dev = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
+        let window = || with_target(|t| crate::dev::game_window(t.proc.pid), None);
+        let fail = |what: &str, e: String| {
+            use std::io::Write;
+            println!("[dev] {what}: {e}");
+            let _ = std::io::stdout().flush();
+            false
+        };
+        macro_rules! set {
+            ($name:expr, $f:expr $(,)?) => {
+                dev.set($name, $f.map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+            };
+        }
+
+        // Save the game window as a PNG, at most maxWidth wide (default 1280).
+        // Returns the file's path, or "error: ..." when it cannot.
+        set!(
+            "capture",
+            Function::new(ctx.clone(), move |max_width: Opt<f64>| -> String {
+                let Some(hwnd) = window() else { return "error: no game window".into() };
+                let path = std::env::temp_dir().join("az_trainer_capture.png");
+                match crate::dev::capture(hwnd, max_width.0.unwrap_or(1280.0) as u32, &path) {
+                    Ok(_) => path.display().to_string(),
+                    Err(e) => format!("error: {e}"),
+                }
+            }),
+        )?;
+        // Bring the game to the front. Input only reaches the foreground window.
+        set!("focus", Function::new(ctx.clone(), move || window().is_some_and(crate::dev::focus)))?;
+        // Hold keys together, "W" or "Shift+W", for ms (default 80).
+        set!(
+            "press",
+            Function::new(ctx.clone(), move |keys: String, ms: Opt<f64>| -> bool {
+                let Some(hwnd) = window() else { return false };
+                crate::dev::focus(hwnd);
+                let keys: Vec<String> = keys.split('+').map(|k| k.trim().to_string()).collect();
+                match crate::dev::press(&keys, ms.0.unwrap_or(80.0) as u64) {
+                    Ok(()) => true,
+                    Err(e) => fail("press", e),
+                }
+            }),
+        )?;
+        // Press keys down, or release them, on their own: dev.down("Alt"), then
+        // other input or captures, then dev.up("Alt").
+        for (name, down) in [("down", true), ("up", false)] {
+            set!(
+                name,
+                Function::new(ctx.clone(), move |keys: String| -> bool {
+                    let Some(hwnd) = window() else { return false };
+                    crate::dev::focus(hwnd);
+                    let keys: Vec<String> = keys.split('+').map(|k| k.trim().to_string()).collect();
+                    match crate::dev::hold(&keys, down) {
+                        Ok(()) => true,
+                        Err(e) => fail(name, e),
+                    }
+                }),
+            )?;
+        }
+        // Move the mouse by a relative amount: turning the camera.
+        set!(
+            "mouse",
+            Function::new(ctx.clone(), move |dx: f64, dy: f64| -> bool {
+                let Some(hwnd) = window() else { return false };
+                crate::dev::focus(hwnd);
+                crate::dev::mouse_move(dx as i32, dy as i32)
+            }),
+        )?;
+        // Click "left" (default), "right" or "middle", held for ms (default 60).
+        set!(
+            "click",
+            Function::new(ctx.clone(), move |button: Opt<String>, ms: Opt<f64>| -> bool {
+                let Some(hwnd) = window() else { return false };
+                crate::dev::focus(hwnd);
+                match crate::dev::click(button.0.as_deref().unwrap_or("left"), ms.0.unwrap_or(60.0) as u64) {
+                    Ok(()) => true,
+                    Err(e) => fail("click", e),
+                }
+            }),
+        )?;
+        // Wait, letting the game run. Blocks the trainer's tick meanwhile.
+        set!(
+            "sleep",
+            Function::new(ctx.clone(), |ms: f64| std::thread::sleep(std::time::Duration::from_millis(ms.max(0.0) as u64))),
+        )?;
+
+        ctx.globals().set("dev", dev).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+}
 
 /// Install `mem.*` and `log()`.
 fn register_host(ctx: &Context) -> Result<(), String> {

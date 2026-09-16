@@ -5,6 +5,9 @@
 
 #[path = "../mem.rs"]
 mod mem;
+#[cfg(feature = "devtools")]
+#[path = "../dev.rs"]
+mod dev;
 #[path = "../finder.rs"]
 mod finder;
 #[path = "../game.rs"]

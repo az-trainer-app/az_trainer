@@ -15,6 +15,7 @@ Newest first. Screenshots of every trainer are on the [website](https://az-train
 - Onimusha: Way of the Sword
 - The Blood of Dawnwalker
 - Resonance: A Plague Tale Legacy
+- 007 First Light
 - Dragon Age: The Veilguard
 - Black Myth: Wukong
 - A Plague Tale: Requiem

@@ -97,6 +97,13 @@ something related, change the value in game, and compare:
 `snap = research.capture(addrs)`. In a devtools build `research` is
 `lib/research.js`, already loaded.
 
+A devtools build can also see and drive the game, for research that needs it
+in a particular state: `dev.capture(maxWidth)` saves the game window as a PNG
+and returns its path, `dev.press('Shift+W', ms)` holds keys, `dev.down` /
+`dev.up` press and release separately, `dev.mouse(dx, dy)` and
+`dev.click(button)` move and click, and `dev.focus()` / `dev.sleep(ms)` bring
+the game forward and wait. None of it exists in a released build.
+
 ### Several builds of a game
 
 A config that finds everything by signature usually survives patches as is.
