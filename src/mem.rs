@@ -570,15 +570,36 @@ impl Proc {
         out
     }
 
-    /// Committed, writable regions small enough to read in one go - where a
-    /// game keeps the values it is changing: the heap, and the module's own
-    /// data sections.
+    /// Committed, writable regions - where a game keeps the values it is
+    /// changing: the heap, and the module's own data sections.
     fn writable_regions(&self) -> Vec<(u64, usize)> {
         // READWRITE, WRITECOPY, EXECUTE_READWRITE, EXECUTE_WRITECOPY
         self.regions(|p| p & (0x04 | 0x08 | 0x40 | 0x80) != 0)
-            .into_iter()
-            .filter(|&(_, size)| (0x1000..=256 * 1024 * 1024).contains(&size))
-            .collect()
+    }
+
+    /// Walk `[base, base + size)` in `SCAN_CHUNK` pieces, handing
+    /// `f(offset, bytes)` each piece that could be read. A piece that fails as
+    /// a whole - the process changing its memory mid-read - is retried page
+    /// by page, and its readable pages are passed on one at a time, so one
+    /// moving page does not hide the rest of a region.
+    fn read_chunks(&self, base: u64, size: usize, mut f: impl FnMut(usize, &[u8])) {
+        const PAGE: usize = 0x1000;
+        let mut buf = vec![0u8; SCAN_CHUNK.min(size)];
+        let mut off = 0usize;
+        while off < size {
+            let n = (size - off).min(SCAN_CHUNK);
+            if self.read(base + off as u64, &mut buf[..n]) {
+                f(off, &buf[..n]);
+            } else {
+                for p in (0..n).step_by(PAGE) {
+                    let m = PAGE.min(n - p);
+                    if self.read(base + (off + p) as u64, &mut buf[..m]) {
+                        f(off + p, &buf[..m]);
+                    }
+                }
+            }
+            off += n;
+        }
     }
 
     /// A first scan: every 4-byte value in writable memory within `[lo, hi]`,
@@ -586,31 +607,27 @@ impl Proc {
     pub fn snapshot(&self, lo: f64, hi: f64, floats: bool, ints: bool, limit: usize) -> Vec<ValueScan> {
         let mut out = Vec::new();
         let mut total = 0usize;
-        let mut buf = Vec::new();
         for (base, size) in self.writable_regions() {
             if total >= limit {
                 break;
             }
-            buf.resize(size, 0);
-            if !self.read(base, &mut buf[..size]) {
-                continue;
-            }
-            for int in [false, true] {
-                if (int && !ints) || (!int && !floats) {
-                    continue;
-                }
-                let mut idx = Vec::new();
-                let mut raw = Vec::new();
-                for i in 0..size / 4 {
-                    let o = i * 4;
-                    let r = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+            let (mut fidx, mut fraw, mut iidx, mut iraw) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            self.read_chunks(base, size, |off, bytes| {
+                for (i, word) in bytes.chunks_exact(4).enumerate() {
+                    let r = u32::from_le_bytes(word.try_into().unwrap());
+                    let idx = (off / 4 + i) as u32;
                     // NaN compares false, so a float scan never keeps one
-                    let v = ValueScan::decode(int, r);
-                    if v >= lo && v <= hi {
-                        idx.push(i as u32);
-                        raw.push(r);
+                    if floats && (lo..=hi).contains(&ValueScan::decode(false, r)) {
+                        fidx.push(idx);
+                        fraw.push(r);
+                    }
+                    if ints && (lo..=hi).contains(&ValueScan::decode(true, r)) {
+                        iidx.push(idx);
+                        iraw.push(r);
                     }
                 }
+            });
+            for (int, idx, raw) in [(false, fidx, fraw), (true, iidx, iraw)] {
                 if !idx.is_empty() {
                     total += idx.len();
                     out.push(ValueScan { base, size, int, idx, raw });
@@ -622,25 +639,27 @@ impl Proc {
 
     /// A next scan: re-read every candidate, keep those for which
     /// `keep(before, now)` holds, and remember `now` for the pass after.
-    /// Regions that can no longer be read are dropped. Returns the survivors.
+    /// Candidates that can no longer be read are dropped. Returns the survivors.
     pub fn refine(&self, scan: &mut Vec<ValueScan>, keep: impl Fn(f64, f64) -> bool) -> usize {
-        let mut buf = Vec::new();
         let mut total = 0usize;
         scan.retain_mut(|s| {
-            buf.resize(s.size, 0);
-            if !self.read(s.base, &mut buf[..s.size]) {
-                return false;
-            }
-            let mut idx = Vec::new();
-            let mut raw = Vec::new();
-            for (k, &i) in s.idx.iter().enumerate() {
-                let o = i as usize * 4;
-                let r = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
-                if keep(s.value(s.raw[k]), s.value(r)) {
-                    idx.push(i);
-                    raw.push(r);
+            let (mut idx, mut raw) = (Vec::new(), Vec::new());
+            let mut k = 0usize; // candidates are in address order
+            self.read_chunks(s.base, s.size, |off, bytes| {
+                let end = off + bytes.len();
+                while k < s.idx.len() && (s.idx[k] as usize) * 4 < off {
+                    k += 1; // in a page that could not be read
                 }
-            }
+                while k < s.idx.len() && (s.idx[k] as usize) * 4 + 4 <= end {
+                    let o = s.idx[k] as usize * 4 - off;
+                    let r = u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
+                    if keep(s.value(s.raw[k]), s.value(r)) {
+                        idx.push(s.idx[k]);
+                        raw.push(r);
+                    }
+                    k += 1;
+                }
+            });
             s.idx = idx;
             s.raw = raw;
             total += s.idx.len();
@@ -651,44 +670,24 @@ impl Proc {
 
     /// Every 8-byte slot in readable committed memory holding a value in
     /// `[lo, hi)`, as `(address, value)`, up to `limit` - the step a reverse
-    /// pointer search repeats. Read in chunks, so no region is too big.
+    /// pointer search repeats.
     pub fn find_pointers(&self, lo: u64, hi: u64, limit: usize) -> Vec<(u64, u64)> {
         let mut out = Vec::new();
-        let mut buf = vec![0u8; SCAN_CHUNK];
         // READONLY, READWRITE, WRITECOPY and their EXECUTE_ forms
-        // a chunk the game changes mid-read fails as a whole; its pages are
-        // then read one by one, so one moving page does not hide the rest
-        const PAGE: usize = 0x1000;
-        let scan = |at: u64, bytes: &[u8], out: &mut Vec<(u64, u64)>| {
-            for (i, slot) in bytes.chunks_exact(8).enumerate() {
-                let v = u64::from_le_bytes(slot.try_into().unwrap());
-                if v >= lo && v < hi {
-                    out.push((at + (i * 8) as u64, v));
-                    if out.len() >= limit {
-                        return true;
-                    }
-                }
-            }
-            false
-        };
         for (base, size) in self.regions(|p| p & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80) != 0) {
-            let mut off = 0usize;
-            while off < size {
-                let n = (size - off).min(SCAN_CHUNK);
-                let at = base + off as u64;
-                if self.read(at, &mut buf[..n]) {
-                    if scan(at, &buf[..n], &mut out) {
-                        return out;
+            self.read_chunks(base, size, |off, bytes| {
+                for (i, slot) in bytes.chunks_exact(8).enumerate() {
+                    if out.len() >= limit {
+                        return;
                     }
-                } else {
-                    for p in (0..n).step_by(PAGE) {
-                        let m = PAGE.min(n - p);
-                        if self.read(at + p as u64, &mut buf[..m]) && scan(at + p as u64, &buf[..m], &mut out) {
-                            return out;
-                        }
+                    let v = u64::from_le_bytes(slot.try_into().unwrap());
+                    if v >= lo && v < hi {
+                        out.push((base + (off + i * 8) as u64, v));
                     }
                 }
-                off += n;
+            });
+            if out.len() >= limit {
+                break;
             }
         }
         out
