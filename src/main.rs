@@ -30,8 +30,20 @@ use gpui::{
 /// Displayed as "AZ Trainer v1.0.1"; the value comes from Cargo.toml.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// "AZ Trainer v1.5.2", or just "AZ Trainer" in a preview: previews make the
+/// README and website screenshots, which should not go stale with every
+/// release.
 fn app_title() -> String {
-    format!("AZ Trainer v{VERSION}")
+    if previewing() {
+        "AZ Trainer".into()
+    } else {
+        format!("AZ Trainer v{VERSION}")
+    }
+}
+
+fn previewing() -> bool {
+    static PREVIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PREVIEW.get_or_init(|| preview_arg().is_some())
 }
 
 const BG: u32 = 0x11131a;

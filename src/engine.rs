@@ -83,6 +83,11 @@ impl Engine {
                 let level = vec![0; script.options.len()];
                 if let Ok(mut st) = s.lock() {
                     publish(&mut st, &script, level);
+                    // Previews make the published screenshots: no status bar,
+                    // since its update date, checksum and link would date
+                    // them with every script edit.
+                    st.config_info = None;
+                    st.config_rel = None;
                 }
                 nap(&q, Duration::MAX);
             }
