@@ -4,10 +4,6 @@
 *.settings
 configs/.sync.json
 
-# Scan dumps and captures produced by tools/
-tools/*.npz
-tools/*.npy
-tools/*.json
 __pycache__/
 *.pyc
 
