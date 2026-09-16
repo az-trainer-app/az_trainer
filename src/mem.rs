@@ -87,17 +87,35 @@ pub fn find_pid(name: &str) -> Option<u32> {
     }
 }
 
-/// Candidates from a float scan in one region: the offsets still in the
-/// running, and the value each had when last read.
+/// Candidates from a value scan in one region: the offsets still in the
+/// running, and the 4 bytes each held when last read.
 ///
-/// Indices plus values rather than a flat list of addresses: a first scan can
-/// keep tens of millions of candidates, and at that size the representation is
-/// the difference between fitting in memory and not.
-pub struct FloatScan {
+/// Indices plus raw bytes rather than a flat list of addresses: a first scan
+/// can keep tens of millions of candidates, and at that size the
+/// representation is the difference between fitting in memory and not. The
+/// bytes are kept raw so an int survives exactly, where a float copy of it
+/// would not past 2^24.
+pub struct ValueScan {
     pub base: u64,
     pub size: usize,
+    /// the 4 bytes are an `i32`, not an `f32`
+    pub int: bool,
     pub idx: Vec<u32>,
-    pub val: Vec<f32>,
+    pub raw: Vec<u32>,
+}
+
+impl ValueScan {
+    pub fn decode(int: bool, raw: u32) -> f64 {
+        if int {
+            raw as i32 as f64
+        } else {
+            f32::from_bits(raw) as f64
+        }
+    }
+
+    pub fn value(&self, raw: u32) -> f64 {
+        Self::decode(self.int, raw)
+    }
 }
 
 pub struct Proc {
@@ -516,9 +534,9 @@ impl Proc {
         out
     }
 
-    /// Committed, writable, private regions small enough to read in one go -
-    /// where a game keeps the values it is changing.
-    fn writable_private_regions(&self) -> Vec<(u64, usize)> {
+    /// Committed regions, in address order, whose protection `want` accepts.
+    /// Guard pages and no-access pages never are.
+    fn regions(&self, want: impl Fn(u32) -> bool) -> Vec<(u64, usize)> {
         let mut out = Vec::new();
         let mut addr: u64 = 0;
         while addr < (1u64 << 47) {
@@ -537,13 +555,10 @@ impl Proc {
             let rbase = mbi.BaseAddress as u64;
             let rsize = mbi.RegionSize;
             let prot = mbi.Protect;
-            let writable = (prot.0 & 0x04) != 0 || (prot.0 & 0x40) != 0;
             if mbi.State == MEM_COMMIT
-                && mbi.Type.0 == 0x20000 // MEM_PRIVATE
-                && writable
                 && (prot & PAGE_GUARD).0 == 0
-                && rsize >= 0x1000
-                && rsize <= 256 * 1024 * 1024
+                && (prot & PAGE_NOACCESS).0 == 0
+                && want(prot.0)
             {
                 out.push((rbase, rsize));
             }
@@ -555,13 +570,24 @@ impl Proc {
         out
     }
 
-    /// A first scan: every float in writable private memory within
-    /// `[lo, hi]`, up to `limit` candidates.
-    pub fn snapshot_f32(&self, lo: f32, hi: f32, limit: usize) -> Vec<FloatScan> {
+    /// Committed, writable regions small enough to read in one go - where a
+    /// game keeps the values it is changing: the heap, and the module's own
+    /// data sections.
+    fn writable_regions(&self) -> Vec<(u64, usize)> {
+        // READWRITE, WRITECOPY, EXECUTE_READWRITE, EXECUTE_WRITECOPY
+        self.regions(|p| p & (0x04 | 0x08 | 0x40 | 0x80) != 0)
+            .into_iter()
+            .filter(|&(_, size)| (0x1000..=256 * 1024 * 1024).contains(&size))
+            .collect()
+    }
+
+    /// A first scan: every 4-byte value in writable memory within `[lo, hi]`,
+    /// read as a float, an int, or both, up to `limit` candidates.
+    pub fn snapshot(&self, lo: f64, hi: f64, floats: bool, ints: bool, limit: usize) -> Vec<ValueScan> {
         let mut out = Vec::new();
         let mut total = 0usize;
         let mut buf = Vec::new();
-        for (base, size) in self.writable_private_regions() {
+        for (base, size) in self.writable_regions() {
             if total >= limit {
                 break;
             }
@@ -569,19 +595,26 @@ impl Proc {
             if !self.read(base, &mut buf[..size]) {
                 continue;
             }
-            let mut idx = Vec::new();
-            let mut val = Vec::new();
-            for i in 0..size / 4 {
-                let o = i * 4;
-                let v = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
-                if v >= lo && v <= hi {
-                    idx.push(i as u32);
-                    val.push(v);
+            for int in [false, true] {
+                if (int && !ints) || (!int && !floats) {
+                    continue;
                 }
-            }
-            if !idx.is_empty() {
-                total += idx.len();
-                out.push(FloatScan { base, size, idx, val });
+                let mut idx = Vec::new();
+                let mut raw = Vec::new();
+                for i in 0..size / 4 {
+                    let o = i * 4;
+                    let r = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                    // NaN compares false, so a float scan never keeps one
+                    let v = ValueScan::decode(int, r);
+                    if v >= lo && v <= hi {
+                        idx.push(i as u32);
+                        raw.push(r);
+                    }
+                }
+                if !idx.is_empty() {
+                    total += idx.len();
+                    out.push(ValueScan { base, size, int, idx, raw });
+                }
             }
         }
         out
@@ -590,7 +623,7 @@ impl Proc {
     /// A next scan: re-read every candidate, keep those for which
     /// `keep(before, now)` holds, and remember `now` for the pass after.
     /// Regions that can no longer be read are dropped. Returns the survivors.
-    pub fn refine_f32(&self, scan: &mut Vec<FloatScan>, keep: impl Fn(f32, f32) -> bool) -> usize {
+    pub fn refine(&self, scan: &mut Vec<ValueScan>, keep: impl Fn(f64, f64) -> bool) -> usize {
         let mut buf = Vec::new();
         let mut total = 0usize;
         scan.retain_mut(|s| {
@@ -599,21 +632,66 @@ impl Proc {
                 return false;
             }
             let mut idx = Vec::new();
-            let mut val = Vec::new();
+            let mut raw = Vec::new();
             for (k, &i) in s.idx.iter().enumerate() {
                 let o = i as usize * 4;
-                let now = f32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
-                if keep(s.val[k], now) {
+                let r = u32::from_le_bytes([buf[o], buf[o + 1], buf[o + 2], buf[o + 3]]);
+                if keep(s.value(s.raw[k]), s.value(r)) {
                     idx.push(i);
-                    val.push(now);
+                    raw.push(r);
                 }
             }
             s.idx = idx;
-            s.val = val;
+            s.raw = raw;
             total += s.idx.len();
             !s.idx.is_empty()
         });
         total
+    }
+
+    /// Every 8-byte slot in readable committed memory holding a value in
+    /// `[lo, hi)`, as `(address, value)`, up to `limit` - the step a reverse
+    /// pointer search repeats. Read in chunks, so no region is too big.
+    pub fn find_pointers(&self, lo: u64, hi: u64, limit: usize) -> Vec<(u64, u64)> {
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; SCAN_CHUNK];
+        // READONLY, READWRITE, WRITECOPY and their EXECUTE_ forms
+        // a chunk the game changes mid-read fails as a whole; its pages are
+        // then read one by one, so one moving page does not hide the rest
+        const PAGE: usize = 0x1000;
+        let scan = |at: u64, bytes: &[u8], out: &mut Vec<(u64, u64)>| {
+            for (i, slot) in bytes.chunks_exact(8).enumerate() {
+                let v = u64::from_le_bytes(slot.try_into().unwrap());
+                if v >= lo && v < hi {
+                    out.push((at + (i * 8) as u64, v));
+                    if out.len() >= limit {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+        for (base, size) in self.regions(|p| p & (0x02 | 0x04 | 0x08 | 0x20 | 0x40 | 0x80) != 0) {
+            let mut off = 0usize;
+            while off < size {
+                let n = (size - off).min(SCAN_CHUNK);
+                let at = base + off as u64;
+                if self.read(at, &mut buf[..n]) {
+                    if scan(at, &buf[..n], &mut out) {
+                        return out;
+                    }
+                } else {
+                    for p in (0..n).step_by(PAGE) {
+                        let m = PAGE.min(n - p);
+                        if self.read(at + p as u64, &mut buf[..m]) && scan(at + p as u64, &buf[..m], &mut out) {
+                            return out;
+                        }
+                    }
+                }
+                off += n;
+            }
+        }
+        out
     }
 
     pub fn read_bytes(&self, addr: u64, n: usize) -> Option<Vec<u8>> {
@@ -673,5 +751,56 @@ mod tests {
         assert!(Pattern::parse("4").is_none());
         assert!(Pattern::parse("488B").is_none());
         assert!(Pattern::parse("48 8G").is_none());
+    }
+}
+
+#[cfg(test)]
+mod research_tests {
+    use super::*;
+
+    fn me() -> Proc {
+        Proc::open(std::process::id()).expect("open own process")
+    }
+
+    #[test]
+    fn an_int_scan_narrows_to_the_value_that_changed() {
+        // odd values no other memory is likely to hold, on the heap
+        let mut cells: Box<[i32; 3]> = Box::new([731_902_417, 731_902_417, 5]);
+        let at = cells.as_ptr() as u64;
+        let proc = me();
+
+        let mut scan = proc.snapshot(731_902_417.0, 731_902_417.0, false, true, 1_000_000);
+        let found: Vec<u64> = scan.iter().flat_map(|s| s.idx.iter().map(move |&i| s.base + i as u64 * 4)).collect();
+        assert!(found.contains(&at) && found.contains(&(at + 4)), "both copies found");
+        assert!(scan.iter().all(|s| s.int), "ints only");
+
+        cells[0] -= 7;
+        proc.refine(&mut scan, |before, now| now < before);
+        let left: Vec<u64> = scan.iter().flat_map(|s| s.idx.iter().map(move |&i| s.base + i as u64 * 4)).collect();
+        assert!(left.contains(&at), "the lowered one stays");
+        assert!(!left.contains(&(at + 4)), "the unchanged one goes");
+        std::hint::black_box(&cells);
+    }
+
+    #[test]
+    fn a_float_scan_keeps_values_within_a_band() {
+        let cells: Box<[f32; 2]> = Box::new([4_812.625, 9.5]);
+        let at = cells.as_ptr() as u64;
+        let scan = me().snapshot(4_812.5, 4_812.75, true, false, 1_000_000);
+        let hit = scan.iter().any(|s| !s.int && s.idx.iter().any(|&i| s.base + i as u64 * 4 == at));
+        assert!(hit, "the float in range is found");
+        std::hint::black_box(&cells);
+    }
+
+    #[test]
+    fn find_pointers_sees_a_slot_pointing_into_a_range() {
+        let target: Box<[u8; 64]> = Box::new([7; 64]);
+        let t = target.as_ptr() as u64;
+        let holder: Box<u64> = Box::new(t + 16);
+        let slot = &*holder as *const u64 as u64;
+
+        let hits = me().find_pointers(t, t + 64, 100_000);
+        assert!(hits.contains(&(slot, t + 16)), "the holder is found with what it points to");
+        std::hint::black_box((&target, &holder));
     }
 }

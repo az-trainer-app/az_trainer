@@ -88,6 +88,22 @@ impl Script {
             let (module, promise) = module.eval().catch(&ctx).map_err(|e| format!("{e}"))?;
             promise.finish::<()>().catch(&ctx).map_err(|e| format!("{e}"))?;
 
+            // Research builds get lib/research.js as the `research` global, so
+            // an eval snippet can call it without an import of its own.
+            // Declared beside the config, so the relative path resolves the
+            // way the config's own imports do. Optional: a missing lib only
+            // means no helpers.
+            #[cfg(feature = "devtools")]
+            {
+                let src = "import * as research from '../lib/research.js'; globalThis.research = research;";
+                let loaded = Module::declare(ctx.clone(), format!("{name}#research"), src)
+                    .and_then(|m| m.eval())
+                    .and_then(|(_, p)| p.finish::<()>());
+                if let Err(e) = loaded {
+                    eprintln!("research helpers not loaded: {e}");
+                }
+            }
+
             // `'Game.exe'` or `['Game.exe', 'Game-WinGDK.exe']`
             let processes: Vec<String> = match module.get::<_, Value>("process") {
                 Ok(v) if v.is_string() => v.get::<String>().ok().into_iter().collect(),
@@ -441,10 +457,13 @@ impl Loader for FsLoader {
 /// A float scan being narrowed across several calls - a first scan, then next
 /// scans as the value is made to change in the game. Held here because each
 /// step is a separate trip through the devtools channel.
-static FLOAT_SCAN: std::sync::Mutex<Vec<crate::mem::FloatScan>> = std::sync::Mutex::new(Vec::new());
+static VALUE_SCAN: std::sync::Mutex<Vec<crate::mem::ValueScan>> = std::sync::Mutex::new(Vec::new());
 
 /// How many candidates a first scan may keep: 8 bytes each, so ~320 MB.
-const FLOAT_SCAN_LIMIT: usize = 40_000_000;
+const SCAN_LIMIT: usize = 40_000_000;
+
+/// How many pointers one findPointers call may return.
+const POINTER_LIMIT: usize = 1_000_000;
 
 /// Install `mem.*` and `log()`.
 fn register_host(ctx: &Context) -> Result<(), String> {
@@ -538,47 +557,31 @@ fn register_host(ctx: &Context) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
 
-        // Unknown-value search. scanStart(lo, hi) keeps every float in range;
-        // each scanNext(mode[, value]) re-reads the survivors and keeps those
-        // that match - "decreased", "increased", "unchanged", "changed", or
-        // "equal" to value. Returns how many are left (-1 for an unknown mode).
+        // Value search. scanStart(lo, hi[, type]) keeps every value in range -
+        // "float" (the default), "int", or "any" for both. Each
+        // scanNext(mode[, a[, b]]) re-reads the survivors and keeps those that
+        // "decreased", "increased", stayed "unchanged", "changed", are "equal"
+        // to a (within b, default 0.01), or lie "between" a and b. Both return
+        // how many are left, or -1 for an unknown type or mode.
         mem.set(
             "scanStart",
-            Function::new(ctx.clone(), |lo: f64, hi: f64| -> f64 {
-                with_target(
-                    |t| {
-                        let scan = t.proc.snapshot_f32(lo as f32, hi as f32, FLOAT_SCAN_LIMIT);
-                        let n: usize = scan.iter().map(|s| s.idx.len()).sum();
-                        if let Ok(mut g) = FLOAT_SCAN.lock() {
-                            *g = scan;
-                        }
-                        n as f64
-                    },
-                    0.0,
-                )
-            })
-            .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-
-        mem.set(
-            "scanNext",
             Function::new(
                 ctx.clone(),
-                |mode: String, value: rquickjs::function::Opt<f64>| -> f64 {
-                    let v = value.0.unwrap_or(0.0) as f32;
-                    let keep: fn(f32, f32, f32) -> bool = match mode.as_str() {
-                        "decreased" => |b, n, _| n < b,
-                        "increased" => |b, n, _| n > b,
-                        "unchanged" => |b, n, _| n == b,
-                        "changed" => |b, n, _| n != b,
-                        "equal" => |_, n, v| (n - v).abs() < 0.01,
+                |lo: f64, hi: f64, kind: rquickjs::function::Opt<String>| -> f64 {
+                    let (floats, ints) = match kind.0.as_deref().unwrap_or("float") {
+                        "float" => (true, false),
+                        "int" => (false, true),
+                        "any" => (true, true),
                         _ => return -1.0,
                     };
                     with_target(
-                        |t| match FLOAT_SCAN.lock() {
-                            Ok(mut g) => t.proc.refine_f32(&mut g, |b, n| keep(b, n, v)) as f64,
-                            Err(_) => 0.0,
+                        |t| {
+                            let scan = t.proc.snapshot(lo, hi, floats, ints, SCAN_LIMIT);
+                            let n: usize = scan.iter().map(|s| s.idx.len()).sum();
+                            if let Ok(mut g) = VALUE_SCAN.lock() {
+                                *g = scan;
+                            }
+                            n as f64
                         },
                         0.0,
                     )
@@ -589,21 +592,79 @@ fn register_host(ctx: &Context) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
         mem.set(
+            "scanNext",
+            Function::new(
+                ctx.clone(),
+                |mode: String, a: rquickjs::function::Opt<f64>, b: rquickjs::function::Opt<f64>| -> f64 {
+                    let (a, b) = (a.0.unwrap_or(0.0), b.0);
+                    let keep: Box<dyn Fn(f64, f64) -> bool> = match mode.as_str() {
+                        "decreased" => Box::new(|was, now| now < was),
+                        "increased" => Box::new(|was, now| now > was),
+                        "unchanged" => Box::new(|was, now| now == was),
+                        "changed" => Box::new(|was, now| now != was),
+                        "equal" => {
+                            let tol = b.unwrap_or(0.01);
+                            Box::new(move |_, now| (now - a).abs() <= tol)
+                        }
+                        "between" => {
+                            let (lo, hi) = (a.min(b.unwrap_or(a)), a.max(b.unwrap_or(a)));
+                            Box::new(move |_, now| now >= lo && now <= hi)
+                        }
+                        _ => return -1.0,
+                    };
+                    with_target(
+                        |t| match VALUE_SCAN.lock() {
+                            Ok(mut g) => t.proc.refine(&mut g, keep) as f64,
+                            Err(_) => 0.0,
+                        },
+                        0.0,
+                    )
+                },
+            )
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Up to n survivors as a flat [addr, value, isInt, ...].
+        mem.set(
             "scanResults",
             Function::new(ctx.clone(), |n: f64| -> Vec<f64> {
                 let mut out = Vec::new();
-                if let Ok(g) = FLOAT_SCAN.lock() {
+                if let Ok(g) = VALUE_SCAN.lock() {
                     'regions: for s in g.iter() {
                         for (k, &i) in s.idx.iter().enumerate() {
-                            if out.len() / 2 >= n as usize {
+                            if out.len() / 3 >= n as usize {
                                 break 'regions;
                             }
                             out.push((s.base + i as u64 * 4) as f64);
-                            out.push(s.val[k] as f64);
+                            out.push(s.value(s.raw[k]));
+                            out.push(if s.int { 1.0 } else { 0.0 });
                         }
                     }
                 }
                 out
+            })
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Every 8-byte slot anywhere in readable memory holding a value in
+        // [lo, hi), as a flat [at, value, ...] - the step a reverse pointer
+        // search (lib/research.js staticPaths) repeats.
+        mem.set(
+            "findPointers",
+            Function::new(ctx.clone(), |lo: f64, hi: f64, limit: rquickjs::function::Opt<f64>| -> Vec<f64> {
+                let limit = limit.0.map_or(POINTER_LIMIT, |l| (l as usize).min(POINTER_LIMIT));
+                with_target(
+                    |t| {
+                        t.proc
+                            .find_pointers(lo as u64, hi as u64, limit)
+                            .into_iter()
+                            .flat_map(|(at, v)| [at as f64, v as f64])
+                            .collect()
+                    },
+                    Vec::new(),
+                )
             })
             .map_err(|e| e.to_string())?,
         )
@@ -844,6 +905,15 @@ mod tests {
 
     /// Every shipped config must load in the real QuickJS host - not just
     /// parse under Node - and satisfy what the engine relies on.
+    #[test]
+    #[cfg(feature = "devtools")]
+    fn research_builds_expose_the_research_helpers() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("configs").join("games").join("innocence.js");
+        let script = Script::load(&path).unwrap();
+        assert_eq!(script.eval("typeof research.staticPaths").unwrap(), "function");
+        assert_eq!(script.eval("typeof research.changes").unwrap(), "function");
+    }
+
     #[test]
     fn every_game_config_loads() {
         let games = Path::new(env!("CARGO_MANIFEST_DIR")).join("configs").join("games");

@@ -56,6 +56,8 @@ Put it in `configs/games/` with `somegame.jpg` or `somegame.png` beside it for a
 | `hold(addr, value)`, `holdScale(addr, mult)`, `clearHolds()` | ~1 kHz float writer; one address at a time |
 | `moduleBase()`, `moduleSize()`, `rip(hit, pos, len)` | Module bounds; RIP-relative operands |
 | `findAccessors(addr, size, access, ms)` | Research: instructions touching an address |
+| `scanStart(lo, hi, type)`, `scanNext(mode, a, b)`, `scanResults(n)` | Research: find a value by scanning, then narrowing as it changes (floats, ints, or both) |
+| `findPointers(lo, hi, limit)` | Research: every slot pointing into a range |
 
 ### Libraries
 
@@ -65,6 +67,35 @@ Put it in `configs/games/` with `somegame.jpg` or `somegame.png` beside it for a
 | `lib/scan.js` | Cached signature scans: `once`, `onceWhere`, `ripF32` |
 | `lib/option.js` | `whileOn`, `whileFound`, `patchWhileOn` |
 | `lib/unreal.js` | UE5 pawn walks, pointer chains, attribute holds |
+| `lib/research.js` | Devtools only: `staticPaths` (reverse pointer search), `resolve`, `capture` / `changes` |
+
+### Finding values
+
+With a devtools build (`cargo build --release --features devtools`) attached to
+the game, research runs through the eval channel in the config's own context:
+
+```js
+mem.scanStart(1, 100000, 'any');   // everything that could be health
+// take damage
+mem.scanNext('decreased');
+// heal, or wait
+mem.scanNext('increased');
+mem.scanResults(20);               // [addr, value, isInt, ...]
+```
+
+`scanNext('equal', 380)` and `scanNext('between', 300, 400)` narrow on a known
+reading. Heap addresses change on restart; to reach one from a fixed place,
+search backwards from it:
+
+```js
+research.staticPaths(0x1ae1be66e0, { depth: 2 }); // [{ rva, offsets }]: [[module+rva]+o0]+o1
+```
+
+For a value that is hard to search for directly, capture the memory around
+something related, change the value in game, and compare:
+`research.changes(snap, (c) => c.nowFloat < c.wasFloat)` after
+`snap = research.capture(addrs)`. In a devtools build `research` is
+`lib/research.js`, already loaded.
 
 ### Several builds of a game
 

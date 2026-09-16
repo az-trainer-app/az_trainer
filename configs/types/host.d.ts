@@ -59,22 +59,33 @@ interface Mem {
      */
     region(addr: Address): number[];
 
-    // ---- unknown-value search (research) ---------------------------------
+    // ---- value and pointer search (research) -----------------------------
 
     /**
-     * Start a float search: keep every float within `[lo, hi]` in writable
-     * memory. Returns the candidate count.
+     * Start a value search over writable memory (heap and the module's data):
+     * keep every 4-byte value within `[lo, hi]`, read as a float (the
+     * default), an int, or `"any"` for both. Returns the candidate count, or
+     * -1 for an unknown type.
+     *
+     * @example mem.scanStart(1, 100000, 'any')   // health, whichever it is
      */
-    scanStart(lo: number, hi: number): number;
+    scanStart(lo: number, hi: number, type?: 'float' | 'int' | 'any'): number;
     /**
      * Narrow the search. Re-reads every candidate and keeps those that
-     * `"decreased"`, `"increased"`, stayed `"unchanged"`, `"changed"`, or are
-     * `"equal"` to `value` since the last pass. Returns the survivors, or -1
-     * for an unknown mode. Change the value in the game between calls.
+     * `"decreased"`, `"increased"`, stayed `"unchanged"` or `"changed"` since
+     * the last pass, are `"equal"` to `a` (within `b`, default 0.01), or lie
+     * `"between"` `a` and `b`. Returns the survivors, or -1 for an unknown
+     * mode. Change the value in the game between calls.
      */
-    scanNext(mode: 'decreased' | 'increased' | 'unchanged' | 'changed' | 'equal', value?: number): number;
-    /** Up to `n` survivors as a flat `[addr, value, addr, value, ...]`. */
+    scanNext(mode: 'decreased' | 'increased' | 'unchanged' | 'changed' | 'equal' | 'between', a?: number, b?: number): number;
+    /** Up to `n` survivors as a flat `[addr, value, isInt, addr, value, isInt, ...]`. */
     scanResults(n: number): number[];
+    /**
+     * Every 8-byte slot in readable memory holding a value in `[lo, hi)`, as a
+     * flat `[at, value, ...]`, up to `limit` (at most 1,000,000). The step of a
+     * reverse pointer search - see lib/research.js `staticPaths`.
+     */
+    findPointers(lo: Address, hi: Address, limit?: number): number[];
     /** Load address of the game's main module. */
     moduleBase(): Address;
     /** Size of the main module in bytes. */
