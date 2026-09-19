@@ -44,6 +44,9 @@ export const options = [
 ```
 
 Put it in `configs/games/` with `somegame.jpg` or `somegame.png` beside it for artwork.
+`cargo run --bin artwork -- "Some Game" somegame` fetches that artwork from Steam:
+it takes an app id, a store URL or a name, saves the library hero as
+`configs/games/somegame.jpg` scaled to 1280 wide, and prints the match it used.
 `{ separator: 'Heading' }` draws a titled divider; `{ separator: true }` a plain line.
 
 ### Host API
@@ -170,7 +173,7 @@ cargo build --release
 `target/release/az_trainer.exe` reads the repository's `configs/`.
 `--preview configs/games/<game>.js` opens a config without the game.
 
-Helpers: `cfgcheck <config.js>`, `finder_test`, `detour_test`.
+Helpers: `cfgcheck <config.js>`, `artwork <game> <config>`, `finder_test`, `detour_test`.
 
 ## Tests
 
