@@ -175,6 +175,11 @@ cargo build --release
 
 Helpers: `cfgcheck <config.js>`, `artwork <game> <config>`, `finder_test`, `detour_test`.
 
+`cfgcheck --json configs/games` prints every config's title, options and
+shortcuts as JSON; the website's per-game pages are built from it, so a new
+game gets its page by regenerating `games.json` there (see that repository's
+README).
+
 ## Tests
 
 ```bash

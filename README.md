@@ -10,16 +10,16 @@ A lightweight trainer for single-player PC games on Windows. AZ Trainer detects 
 
 ## Supported games
 
-Newest first. Screenshots of every trainer are on the [website](https://az-trainer-app.github.io).
+Newest first; each links to its options and shortcuts on the [website](https://az-trainer-app.github.io).
 
-- Onimusha: Way of the Sword
-- The Blood of Dawnwalker
-- Resonance: A Plague Tale Legacy
-- 007 First Light
-- Dragon Age: The Veilguard
-- Black Myth: Wukong
-- A Plague Tale: Requiem
-- A Plague Tale: Innocence
+- [Onimusha: Way of the Sword](https://az-trainer-app.github.io/games/onimusha/)
+- [The Blood of Dawnwalker](https://az-trainer-app.github.io/games/dawnwalker/)
+- [Resonance: A Plague Tale Legacy](https://az-trainer-app.github.io/games/resonance/)
+- [007 First Light](https://az-trainer-app.github.io/games/firstlight/)
+- [Dragon Age: The Veilguard](https://az-trainer-app.github.io/games/veilguard/)
+- [Black Myth: Wukong](https://az-trainer-app.github.io/games/wukong/)
+- [A Plague Tale: Requiem](https://az-trainer-app.github.io/games/requiem/)
+- [A Plague Tale: Innocence](https://az-trainer-app.github.io/games/innocence/)
 
 ## Features
 
