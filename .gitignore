@@ -11,3 +11,6 @@ __pycache__/
 /app.rc
 
 node_modules/
+
+# local editor/session settings
+.claude/
